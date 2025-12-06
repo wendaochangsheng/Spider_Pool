@@ -255,6 +255,47 @@ def _ai_log(message: str, enabled: bool) -> None:
         print(message, flush=True)
 
 
+def request_ai_theme(host: str, *, model: str | None = None, log_to_terminal: bool = True) -> tuple[str | None, List[str] | None]:
+    """Ask the AI to propose a topic and 3-5 keywords.
+
+    Returns (topic, keywords) or (None, None) when the AI is unavailable or responds
+    with an invalid structure.
+    """
+    prompt = textwrap.dedent(
+        f"""
+        你是一个内容运营助手，需要为站点 {host} 生成一个随机主题和关键词。
+        输出要求：严格返回 JSON，包含字段：
+          topic: string，10-18 字的自然主题
+          keywords: array[string]，3-5 个关键词
+        不要添加额外解释或 Markdown。
+        """
+    ).strip()
+
+    _ai_log(f"[AI] 请求随机主题：host='{host}'", log_to_terminal)
+    try:
+        response, error = _call_deepseek(prompt, model or "deepseek-chat", max_tokens=200)
+        if not response:
+            if error:
+                _ai_log(f"[AI] 请求随机主题失败: {error}", log_to_terminal)
+            return None, None
+        content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+        _ai_log(f"[AI] 随机主题原始响应: {content[:200]}...", log_to_terminal)
+        normalized = _normalize_json_text(content or "")
+        if not normalized:
+            return None, None
+        payload = json.loads(normalized)
+        topic = payload.get("topic") if isinstance(payload, dict) else None
+        keywords = payload.get("keywords") if isinstance(payload, dict) else None
+        if topic and isinstance(keywords, list):
+            keywords_list = [str(item).strip() for item in keywords if str(item).strip()]
+            if keywords_list:
+                return topic.strip(), keywords_list[:5]
+        return None, None
+    except Exception as exc:  # pragma: no cover - defensive network handling
+        _ai_log(f"[AI] 请求随机主题异常: {exc}", log_to_terminal)
+        return None, None
+
+
 def generate_article(
     topic: str,
     keywords: List[str],

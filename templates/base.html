@@ -3,20 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{% block title %}内容枢纽{% endblock %}</title>
+  <title>{% block title %}轻阅读{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
-<body>
+<body class="site">
   <header class="site-header">
-    <div class="wrapper">
-      <h1><a href="/">内容枢纽</a></h1>
-      <nav>
-        <a href="/">节点概览</a>
-        <a href="/admin">控制台</a>
+    <div class="wrapper header-inner">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <div>
+          <a class="brand-title" href="/">轻阅读</a>
+          <p class="muted small">简洁日更的阅读摘录</p>
+        </div>
+      </div>
+      <nav class="nav-links">
+        <a href="/">首页</a>
       </nav>
     </div>
   </header>
-  <main class="wrapper">
+  <main class="wrapper page-shell">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="flash-group">
@@ -29,8 +34,11 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
-    <div class="wrapper">
-      <small>© {{ host or request.host }} · 内容枢纽</small>
+    <div class="wrapper footer-inner">
+      <div>
+        <small>© {{ host or request.host }} · 轻阅读空间</small>
+        <p class="muted small">日常更新 · 自然呈现 · 主题聚合</p>
+      </div>
     </div>
   </footer>
   {% block scripts %}{% endblock %}

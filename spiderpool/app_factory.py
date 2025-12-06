@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
 import random
 import re
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -24,9 +24,9 @@ from flask import (
     url_for,
 )
 
-from .content import generate_article
+from .content import generate_article, request_ai_theme
 from .links import build_link_set
-from .storage import load_data, save_data, update_data, record_view
+from .storage import load_data, save_data, update_data, record_view, record_bot_hit
 
 ADMIN_USERNAME = os.environ.get("SPIDERPOOL_ADMIN", "admin")
 ADMIN_PASSWORD = os.environ.get("SPIDERPOOL_PASSWORD", "admin")
@@ -53,7 +53,17 @@ TEMPLATE_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
 
-def _random_theme(settings: dict, domains: list) -> tuple[str, list[str], str]:
+def _random_theme(settings: dict, domains: list, host: str) -> tuple[str, list[str], str]:
+    log_to_terminal = bool(settings.get("ai_console_log", True))
+    ai_topic, ai_keywords = request_ai_theme(
+        host,
+        model=settings.get("deepseek_model", "deepseek-chat"),
+        log_to_terminal=log_to_terminal,
+    )
+    if ai_topic and ai_keywords:
+        slug = slugify(f"{ai_keywords[0]}-{random.randint(1000, 9999)}")
+        return ai_topic, ai_keywords, slug
+
     domain_topics = [item.get("topic") for item in domains if item.get("topic")]
     keyword_pool = [kw for kw in settings.get("default_keywords", []) if kw]
     base_seed = random.choice(domain_topics + keyword_pool + ["行业", "产品", "体验", "趋势", "方案"])
@@ -91,16 +101,36 @@ def create_app() -> Flask:
             return redirect(url_for("admin_login"))
         return None
 
+    def _domain_overview(pages: dict, stats: dict) -> list[dict]:
+        overview: dict[str, dict] = {}
+        for slug, page in pages.items():
+            host = page.get("host") or "未记录"
+            entry = overview.setdefault(host, {"count": 0, "views": 0, "latest": None})
+            entry["count"] += 1
+            entry["views"] += int(stats.get(slug, 0))
+            timestamp = page.get("updated_at")
+            if timestamp and (entry["latest"] is None or timestamp > entry["latest"]):
+                entry["latest"] = timestamp
+        return [
+            {"host": host, **metrics}
+            for host, metrics in sorted(overview.items(), key=lambda item: item[1]["views"], reverse=True)
+        ]
+
     def _admin_payload():
         data = load_data()
         pages = data.get("pages", {})
         stats_map = data.get("view_stats", {})
         sorted_stats = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)
         bot_hits = data.get("bot_hits", [])
-        return data, pages, stats_map, sorted_stats, bot_hits
+        domain_stats = _domain_overview(pages, stats_map)
+        return data, pages, stats_map, sorted_stats, bot_hits, domain_stats
 
     def _register_host(hostname: str) -> None:
         if not hostname:
+            return
+
+        existing_domains = load_data().get("domains", [])
+        if any(item.get("host") == hostname for item in existing_domains):
             return
 
         def _mutate(payload):
@@ -109,6 +139,23 @@ def create_app() -> Flask:
                 domains.append({"host": hostname, "label": hostname, "topic": ""})
 
         update_data(_mutate)
+
+    def _filter_pages_by_host(host: str, data: dict) -> list[dict]:
+        pages = list(data.get("pages", {}).values())
+        host_pages = [page for page in pages if page.get("host") == host]
+        return host_pages or pages
+
+    def _resolve_random_page(host: str, path_hint: str | None = None) -> dict:
+        data = load_data()
+        pages = _filter_pages_by_host(host, data)
+        slug_candidate = slugify(path_hint or "") if path_hint else ""
+        if slug_candidate and slug_candidate in data.get("pages", {}):
+            page_slug = slug_candidate
+        elif pages:
+            page_slug = random.choice(pages).get("slug")
+        else:
+            page_slug = slug_candidate or slugify(f"entry-{random.randint(1000, 9999)}")
+        return _ensure_page(page_slug, host=host)
 
     def _ensure_page(
         slug: str,
@@ -189,7 +236,7 @@ def create_app() -> Flask:
         host = request.host.split(":")[0]
         _register_host(host)
         data = load_data()
-        pages = list(data.get("pages", {}).values())
+        pages = _filter_pages_by_host(host, data)
         random.shuffle(pages)
         spotlight = pages[:8]
         def _sort_by_updated(page):
@@ -199,19 +246,36 @@ def create_app() -> Flask:
                 return datetime.min
         latest_pages = sorted(pages, key=_sort_by_updated, reverse=True)[:6]
         stats_map = data.get("view_stats", {})
-        hottest = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)[:6]
-        stats = data.get("view_stats", {})
+        slug_lookup = {page.get("slug"): page for page in pages}
+        leaderboard = []
+        for slug, count in stats_map.items():
+            page = slug_lookup.get(slug, {})
+            label = page.get("topic") or page.get("title") or slug
+            leaderboard.append({"slug": slug, "count": count, "label": label})
+        leaderboard = sorted(leaderboard, key=lambda item: item["count"], reverse=True)
+        top_performers = []
+        for item in leaderboard[:6]:
+            page = slug_lookup.get(item["slug"], {})
+            top_performers.append(
+                {
+                    "slug": item["slug"],
+                    "views": item["count"],
+                    "title": page.get("title") or page.get("topic") or item["slug"],
+                    "updated_at": page.get("updated_at") or page.get("created_at"),
+                }
+            )
         shuffled_links = data.get("external_links", [])[:]
         random.shuffle(shuffled_links)
         return render_template(
             "index.html",
             pages=spotlight,
             page_total=len(pages),
-            stats=stats,
+            stats=stats_map,
+            leaderboard=leaderboard,
             host=host,
             external_links=shuffled_links[:8],
             latest_pages=latest_pages,
-            hottest=hottest,
+            top_performers=top_performers,
         )
 
     @app.route("/p/<slug>")
@@ -222,26 +286,34 @@ def create_app() -> Flask:
         record_view(slug, user_agent=request.headers.get("User-Agent"))
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
+    @app.route("/robots.txt")
+    def robots():
+        robots_body = "User-agent: *\nAllow: /\n"
+        record_bot_hit(request.headers.get("User-Agent"))
+        response = make_response(robots_body)
+        response.headers["Content-Type"] = "text/plain"
+        return response
+
     @app.errorhandler(404)
     def fallback_page(error):  # noqa: ANN001
         host = request.host.split(":")[0]
         _register_host(host)
-        data = load_data()
-        pages = list(data.get("pages", {}).values())
-        random.shuffle(pages)
-        if not pages:
-            return make_response("未找到内容", 404)
-        candidate = pages[0]
-        page = _ensure_page(candidate.get("slug"), host=host)
+        page = _resolve_random_page(host)
         record_view(page.get("slug"), user_agent=request.headers.get("User-Agent"))
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
-    @app.route("/robots.txt")
-    def robots():
-        robots_body = "User-agent: *\nDisallow: /\n"
-        response = make_response(robots_body)
-        response.headers["Content-Type"] = "text/plain"
-        return response
+    @app.route("/<path:any_path>")
+    def wildcard_page(any_path: str):
+        reserved_prefixes = ("admin", "api", "static")
+        if any_path.startswith(reserved_prefixes) or any_path in {"favicon.ico"}:
+            return make_response("未找到内容", 404)
+
+        host = request.host.split(":")[0]
+        _register_host(host)
+        slug_hint = any_path.rsplit("/", 1)[-1]
+        page = _resolve_random_page(host, slug_hint)
+        record_view(page.get("slug"), user_agent=request.headers.get("User-Agent"))
+        return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
     @app.route("/admin/login", methods=["GET", "POST"])
     def admin_login():
@@ -265,15 +337,37 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        data, pages, stats_map, sorted_stats, bot_hits = _admin_payload()
+        data, pages, stats_map, sorted_stats, bot_hits, domain_stats = _admin_payload()
+        top_performers = []
+        for slug, views in sorted_stats[:8]:
+            page = pages.get(slug, {})
+            top_performers.append(
+                {
+                    "slug": slug,
+                    "views": views,
+                    "title": page.get("title") or page.get("topic") or slug,
+                    "updated_at": page.get("updated_at") or page.get("created_at"),
+                }
+            )
+
+        def _sort_recent(item):
+            try:
+                return datetime.fromisoformat(item.get("updated_at") or item.get("created_at") or "")
+            except Exception:
+                return datetime.min
+
+        recent_pages = sorted(pages.values(), key=_sort_recent, reverse=True)[:8]
         return render_template(
             "admin/dashboard.html",
             pages=pages,
             stats=sorted_stats,
             stats_map=stats_map,
             bot_hits=bot_hits,
+            domain_stats=domain_stats,
             settings=data.get("settings", {}),
             ai_logs=data.get("ai_logs", []),
+            top_performers=top_performers,
+            recent_pages=recent_pages,
             active="overview",
         )
 
@@ -282,13 +376,34 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        data, pages, stats_map, sorted_stats, _ = _admin_payload()
+        data, pages, stats_map, sorted_stats, _, domain_stats = _admin_payload()
+        try:
+            current_page = max(1, int(request.args.get("page", 1)))
+        except (TypeError, ValueError):
+            current_page = 1
+        per_page = 20
+        page_items = sorted(
+            pages.values(),
+            key=lambda item: item.get("updated_at") or item.get("generated_at") or "",
+            reverse=True,
+        )
+        total_pages = max(1, (len(page_items) + per_page - 1) // per_page)
+        start = (current_page - 1) * per_page
+        page_slice = page_items[start : start + per_page]
         return render_template(
             "admin/content.html",
             pages=pages,
+            page_items=page_slice,
             stats=sorted_stats,
             stats_map=stats_map,
+            domain_stats=domain_stats,
             settings=data.get("settings", {}),
+            pagination={
+                "current": current_page,
+                "total": total_pages,
+                "per_page": per_page,
+                "count": len(page_items),
+            },
             active="content",
         )
 
@@ -297,13 +412,14 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        data, _, _, _, bot_hits = _admin_payload()
+        data, _, _, _, bot_hits, domain_stats = _admin_payload()
         return render_template(
             "admin/settings.html",
             domains=data.get("domains", []),
             external_links=data.get("external_links", []),
             settings=data.get("settings", {}),
             bot_hits=bot_hits,
+            domain_stats=domain_stats,
             active="settings",
         )
 
@@ -430,7 +546,7 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        auto_count = request.form.get("auto_page_count", "12")
+        auto_count = request.form.get("auto_page_count", "8")
         keywords = request.form.get("default_keywords", "")
         model = request.form.get("deepseek_model", "deepseek-chat")
         language = request.form.get("language", "zh")
@@ -444,7 +560,7 @@ def create_app() -> Flask:
             settings = payload.setdefault("settings", {})
             settings.update(
                 {
-                    "auto_page_count": int(auto_count or 12),
+                    "auto_page_count": int(auto_count or 8),
                     "default_keywords": keyword_list,
                     "deepseek_model": model,
                     "language": language,
@@ -466,17 +582,18 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        count = int(request.form.get("count", 5))
-        random_mode = _is_enabled(request.form.get("random"))
-        host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
+        default_count = int(settings.get("auto_page_count", 8) or 8)
+        count = int(request.form.get("count", default_count))
+        random_mode = _is_enabled(request.form.get("random"))
+        host = request.host.split(":")[0]
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         generated = []
         jobs = []
         if random_mode:
             for _ in range(min(count, 30)):
-                topic, keywords, slug = _random_theme(settings, data.get("domains", []))
+                topic, keywords, slug = _random_theme(settings, data.get("domains", []), host)
                 jobs.append({"slug": slug, "topic": topic, "keywords": keywords})
         else:
             jobs = [
@@ -510,14 +627,15 @@ def create_app() -> Flask:
         if guard:
             return guard
 
-        try:
-            count = int(request.args.get("count", 5))
-        except (TypeError, ValueError):
-            count = 5
-        count = max(1, min(count, 30))
-        host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
+        default_count = int(settings.get("auto_page_count", 8) or 8)
+        try:
+            count = int(request.args.get("count", default_count))
+        except (TypeError, ValueError):
+            count = default_count
+        count = max(1, min(count, 30))
+        host = request.host.split(":")[0]
         random_mode = _is_enabled(request.args.get("random"))
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         article_min = max(200, int(settings.get("article_min_words", 800) or 800))
@@ -528,7 +646,7 @@ def create_app() -> Flask:
             jobs = []
             if random_mode:
                 for _ in range(count):
-                    topic, keywords, slug = _random_theme(settings, data.get("domains", []))
+                    topic, keywords, slug = _random_theme(settings, data.get("domains", []), host)
                     jobs.append({"slug": slug, "topic": topic, "keywords": keywords})
             else:
                 jobs = [

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Tuple
 
@@ -17,7 +18,7 @@ DEFAULT_DATA = {
     "ai_logs": [],
     "bot_hits": [],
     "settings": {
-        "auto_page_count": 12,
+        "auto_page_count": 8,
         "default_keywords": [],
         "deepseek_model": "deepseek-chat",
         "language": "zh",
@@ -185,96 +186,115 @@ def load_data() -> Dict[str, Any]:
 
 
 def save_data(payload: Dict[str, Any]) -> None:
-    conn = _get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM settings")
-    cursor.executemany(
-        "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-        [(key, json.dumps(value, ensure_ascii=False)) for key, value in payload.get("settings", {}).items()],
-    )
-
-    cursor.execute("DELETE FROM domains")
-    cursor.executemany(
-        "INSERT OR REPLACE INTO domains(host, label, topic) VALUES (?, ?, ?)",
-        [
-            (item.get("host"), item.get("label"), item.get("topic"))
-            for item in payload.get("domains", [])
-            if item.get("host")
-        ],
-    )
-
-    cursor.execute("DELETE FROM external_links")
-    cursor.executemany(
-        "INSERT OR REPLACE INTO external_links(url, label) VALUES (?, ?)",
-        [
-            (item.get("url"), item.get("label"))
-            for item in payload.get("external_links", [])
-            if item.get("url")
-        ],
-    )
-
-    cursor.execute("DELETE FROM pages")
-    cursor.executemany(
-        """
-        INSERT OR REPLACE INTO pages(
-            slug, title, topic, keywords, excerpt, body, host, generator, model, links, updated_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                slug,
-                page.get("title"),
-                page.get("topic"),
-                json.dumps(page.get("keywords", []), ensure_ascii=False),
-                page.get("excerpt"),
-                page.get("body"),
-                page.get("host"),
-                page.get("generator"),
-                page.get("model"),
-                json.dumps(page.get("links", []), ensure_ascii=False),
-                page.get("updated_at"),
-                page.get("created_at") or page.get("updated_at"),
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            conn = _get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM settings")
+            cursor.executemany(
+                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+                [
+                    (key, json.dumps(value, ensure_ascii=False))
+                    for key, value in payload.get("settings", {}).items()
+                ],
             )
-            for slug, page in payload.get("pages", {}).items()
-        ],
-    )
 
-    existing_views = {row["slug"]: row["views"] for row in _fetch_table(conn, "SELECT slug, views FROM view_stats")}
-    incoming_views = payload.get("view_stats", {})
-    merged_views: Dict[str, int] = {}
-
-    for slug, views in incoming_views.items():
-        merged_views[slug] = max(int(views or 0), int(existing_views.get(slug, 0)))
-
-    for slug, views in existing_views.items():
-        if slug in merged_views:
-            continue
-        if slug not in payload.get("pages", {}):
-            continue
-        merged_views[slug] = int(views)
-
-    cursor.execute("DELETE FROM view_stats")
-    cursor.executemany(
-        "INSERT OR REPLACE INTO view_stats(slug, views) VALUES (?, ?)",
-        [(slug, views) for slug, views in merged_views.items()],
-    )
-
-    cursor.execute("DELETE FROM ai_logs")
-    cursor.executemany(
-        "INSERT INTO ai_logs(level, message, meta, timestamp) VALUES (?, ?, ?, ?)",
-        [
-            (
-                item.get("level", "info"),
-                item.get("message"),
-                json.dumps(item.get("meta", {}), ensure_ascii=False),
-                item.get("timestamp"),
+            cursor.execute("DELETE FROM domains")
+            cursor.executemany(
+                "INSERT OR REPLACE INTO domains(host, label, topic) VALUES (?, ?, ?)",
+                [
+                    (item.get("host"), item.get("label"), item.get("topic"))
+                    for item in payload.get("domains", [])
+                    if item.get("host")
+                ],
             )
-            for item in payload.get("ai_logs", [])[-50:]
-        ],
-    )
 
-    conn.commit()
-    conn.close()
+            cursor.execute("DELETE FROM external_links")
+            cursor.executemany(
+                "INSERT OR REPLACE INTO external_links(url, label) VALUES (?, ?)",
+                [
+                    (item.get("url"), item.get("label"))
+                    for item in payload.get("external_links", [])
+                    if item.get("url")
+                ],
+            )
+
+            cursor.execute("DELETE FROM pages")
+            cursor.executemany(
+                """
+                INSERT OR REPLACE INTO pages(
+                    slug, title, topic, keywords, excerpt, body, host, generator, model, links, updated_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        slug,
+                        page.get("title"),
+                        page.get("topic"),
+                        json.dumps(page.get("keywords", []), ensure_ascii=False),
+                        page.get("excerpt"),
+                        page.get("body"),
+                        page.get("host"),
+                        page.get("generator"),
+                        page.get("model"),
+                        json.dumps(page.get("links", []), ensure_ascii=False),
+                        page.get("updated_at"),
+                        page.get("created_at") or page.get("updated_at"),
+                    )
+                    for slug, page in payload.get("pages", {}).items()
+                ],
+            )
+
+            existing_views = {
+                row["slug"]: row["views"] for row in _fetch_table(conn, "SELECT slug, views FROM view_stats")
+            }
+            incoming_views = payload.get("view_stats", {})
+            merged_views: Dict[str, int] = {}
+
+            for slug, views in incoming_views.items():
+                merged_views[slug] = max(int(views or 0), int(existing_views.get(slug, 0)))
+
+            for slug, views in existing_views.items():
+                if slug in merged_views:
+                    continue
+                if slug not in payload.get("pages", {}):
+                    continue
+                merged_views[slug] = int(views)
+
+            cursor.execute("DELETE FROM view_stats")
+            cursor.executemany(
+                "INSERT OR REPLACE INTO view_stats(slug, views) VALUES (?, ?)",
+                [(slug, views) for slug, views in merged_views.items()],
+            )
+
+            cursor.execute("DELETE FROM ai_logs")
+            cursor.executemany(
+                "INSERT INTO ai_logs(level, message, meta, timestamp) VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        item.get("level", "info"),
+                        item.get("message"),
+                        json.dumps(item.get("meta", {}), ensure_ascii=False),
+                        item.get("timestamp"),
+                    )
+                    for item in payload.get("ai_logs", [])[-50:]
+                ],
+            )
+
+            conn.commit()
+            conn.close()
+            return
+        except sqlite3.OperationalError as exc:  # pragma: no cover - runtime resilience
+            if "locked" not in str(exc).lower() or attempts >= 3:
+                raise
+            time.sleep(0.2 * attempts)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def update_data(mutator: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
@@ -291,13 +311,15 @@ def get_page(slug: str) -> Dict[str, Any] | None:
 
 def record_view(slug: str, *, user_agent: str | None = None) -> None:
     conn = _get_connection()
-    conn.execute(
-        "INSERT INTO view_stats(slug, views) VALUES(?, 1) ON CONFLICT(slug) DO UPDATE SET views = views + 1",
-        (slug,),
-    )
+    try:
+        conn.execute(
+            "INSERT INTO view_stats(slug, views) VALUES(?, 1) ON CONFLICT(slug) DO UPDATE SET views = views + 1",
+            (slug,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     record_bot_hit(user_agent)
-    conn.commit()
-    conn.close()
 
 
 def record_ai_event(message: str, *, level: str = "info", meta: Dict[str, Any] | None = None) -> None:

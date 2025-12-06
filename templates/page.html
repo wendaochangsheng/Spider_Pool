@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ page.title }} · 内容枢纽{% endblock %}
+{% block title %}{{ page.title }} · 轻阅读{% endblock %}
 {% block content %}
 <article class="page">
   <header>
@@ -22,17 +22,17 @@
         <small>{{ page.keywords | join(' · ') }}</small>
       </div>
       <div class="stat-card">
-        <p class="muted">生成方式</p>
-        <small>{{ page.generator or '未知' }} · {{ page.model or '模板' }}</small>
+        <p class="muted">更新记录</p>
+        <small>{{ page.updated_at or page.created_at or '持续更新中' }}</small>
       </div>
     </div>
   </section>
   <section class="related-live">
-    <h3>动态互链 / 外链</h3>
+    <h3>更多阅读</h3>
     <p class="muted">以下链接会随配置实时更新。</p>
     <div class="link-grid">
       {% for item in dynamic_links %}
-        <a class="link-chip" href="{{ item.url }}" {% if item.external %}rel="nofollow noopener" target="_blank"{% endif %}>{{ item.label }}</a>
+        <a class="link-chip" href="{{ item.url }}" {% if item.external %}rel="noopener" target="_blank"{% endif %}>{{ item.label }}</a>
       {% else %}
         <p class="muted">暂无可用链接。</p>
       {% endfor %}
