@@ -3,16 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{% block title %}内容枢纽{% endblock %}</title>
+  <title>{% block title %}轻阅读{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
   <header class="site-header">
     <div class="wrapper">
-      <h1><a href="/">内容枢纽</a></h1>
+      <h1><a href="/">轻阅读</a></h1>
       <nav>
-        <a href="/">节点概览</a>
-        <a href="/admin">控制台</a>
+        <a href="/">首页</a>
       </nav>
     </div>
   </header>
@@ -30,7 +29,7 @@
   </main>
   <footer class="site-footer">
     <div class="wrapper">
-      <small>© {{ host or request.host }} · 内容枢纽</small>
+      <small>© {{ host or request.host }} · 轻阅读空间</small>
     </div>
   </footer>
   {% block scripts %}{% endblock %}

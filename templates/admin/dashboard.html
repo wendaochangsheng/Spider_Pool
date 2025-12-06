@@ -68,6 +68,24 @@
       {% endfor %}
     </div>
   </div>
+  <div class="panel">
+    <div class="panel-header">
+      <h3>域名表现</h3>
+      <p class="muted">按泛域名拆分内容量与访问量，方便分发策略调整。</p>
+    </div>
+    <div class="table small">
+      <div class="row head"><span>域名</span><span>更新时间</span><span>页面数 / 访问</span></div>
+      {% for item in domain_stats %}
+        <div class="row">
+          <span>{{ item.host }}</span>
+          <span class="muted small">{{ item.latest or '未生成' }}</span>
+          <span>{{ item.count }} / {{ item.views }}</span>
+        </div>
+      {% else %}
+        <p class="muted">暂无域名数据，等待首次访问或生成。</p>
+      {% endfor %}
+    </div>
+  </div>
 </section>
 
 <section class="panel">

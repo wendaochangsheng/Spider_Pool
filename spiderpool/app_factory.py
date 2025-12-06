@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
 import random
 import re
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -91,13 +91,29 @@ def create_app() -> Flask:
             return redirect(url_for("admin_login"))
         return None
 
+    def _domain_overview(pages: dict, stats: dict) -> list[dict]:
+        overview: dict[str, dict] = {}
+        for slug, page in pages.items():
+            host = page.get("host") or "未记录"
+            entry = overview.setdefault(host, {"count": 0, "views": 0, "latest": None})
+            entry["count"] += 1
+            entry["views"] += int(stats.get(slug, 0))
+            timestamp = page.get("updated_at")
+            if timestamp and (entry["latest"] is None or timestamp > entry["latest"]):
+                entry["latest"] = timestamp
+        return [
+            {"host": host, **metrics}
+            for host, metrics in sorted(overview.items(), key=lambda item: item[1]["views"], reverse=True)
+        ]
+
     def _admin_payload():
         data = load_data()
         pages = data.get("pages", {})
         stats_map = data.get("view_stats", {})
         sorted_stats = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)
         bot_hits = data.get("bot_hits", [])
-        return data, pages, stats_map, sorted_stats, bot_hits
+        domain_stats = _domain_overview(pages, stats_map)
+        return data, pages, stats_map, sorted_stats, bot_hits, domain_stats
 
     def _register_host(hostname: str) -> None:
         if not hostname:
@@ -109,6 +125,23 @@ def create_app() -> Flask:
                 domains.append({"host": hostname, "label": hostname, "topic": ""})
 
         update_data(_mutate)
+
+    def _filter_pages_by_host(host: str, data: dict) -> list[dict]:
+        pages = list(data.get("pages", {}).values())
+        host_pages = [page for page in pages if page.get("host") == host]
+        return host_pages or pages
+
+    def _resolve_random_page(host: str, path_hint: str | None = None) -> dict:
+        data = load_data()
+        pages = _filter_pages_by_host(host, data)
+        slug_candidate = slugify(path_hint or "") if path_hint else ""
+        if slug_candidate and slug_candidate in data.get("pages", {}):
+            page_slug = slug_candidate
+        elif pages:
+            page_slug = random.choice(pages).get("slug")
+        else:
+            page_slug = slug_candidate or slugify(f"entry-{random.randint(1000, 9999)}")
+        return _ensure_page(page_slug, host=host)
 
     def _ensure_page(
         slug: str,
@@ -189,7 +222,7 @@ def create_app() -> Flask:
         host = request.host.split(":")[0]
         _register_host(host)
         data = load_data()
-        pages = list(data.get("pages", {}).values())
+        pages = _filter_pages_by_host(host, data)
         random.shuffle(pages)
         spotlight = pages[:8]
         def _sort_by_updated(page):
@@ -226,13 +259,20 @@ def create_app() -> Flask:
     def fallback_page(error):  # noqa: ANN001
         host = request.host.split(":")[0]
         _register_host(host)
-        data = load_data()
-        pages = list(data.get("pages", {}).values())
-        random.shuffle(pages)
-        if not pages:
+        page = _resolve_random_page(host)
+        record_view(page.get("slug"), user_agent=request.headers.get("User-Agent"))
+        return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
+
+    @app.route("/<path:any_path>")
+    def wildcard_page(any_path: str):
+        reserved_prefixes = ("admin", "api", "static")
+        if any_path.startswith(reserved_prefixes) or any_path in {"robots.txt", "favicon.ico"}:
             return make_response("未找到内容", 404)
-        candidate = pages[0]
-        page = _ensure_page(candidate.get("slug"), host=host)
+
+        host = request.host.split(":")[0]
+        _register_host(host)
+        slug_hint = any_path.rsplit("/", 1)[-1]
+        page = _resolve_random_page(host, slug_hint)
         record_view(page.get("slug"), user_agent=request.headers.get("User-Agent"))
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
@@ -265,13 +305,14 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        data, pages, stats_map, sorted_stats, bot_hits = _admin_payload()
+        data, pages, stats_map, sorted_stats, bot_hits, domain_stats = _admin_payload()
         return render_template(
             "admin/dashboard.html",
             pages=pages,
             stats=sorted_stats,
             stats_map=stats_map,
             bot_hits=bot_hits,
+            domain_stats=domain_stats,
             settings=data.get("settings", {}),
             ai_logs=data.get("ai_logs", []),
             active="overview",
@@ -282,12 +323,13 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        data, pages, stats_map, sorted_stats, _ = _admin_payload()
+        data, pages, stats_map, sorted_stats, _, domain_stats = _admin_payload()
         return render_template(
             "admin/content.html",
             pages=pages,
             stats=sorted_stats,
             stats_map=stats_map,
+            domain_stats=domain_stats,
             settings=data.get("settings", {}),
             active="content",
         )
@@ -297,13 +339,14 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        data, _, _, _, bot_hits = _admin_payload()
+        data, _, _, _, bot_hits, domain_stats = _admin_payload()
         return render_template(
             "admin/settings.html",
             domains=data.get("domains", []),
             external_links=data.get("external_links", []),
             settings=data.get("settings", {}),
             bot_hits=bot_hits,
+            domain_stats=domain_stats,
             active="settings",
         )
 
