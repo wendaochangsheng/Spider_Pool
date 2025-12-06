@@ -305,7 +305,7 @@ def create_app() -> Flask:
 
     @app.route("/robots.txt")
     def robots():
-        robots_body = "User-agent: *\nDisallow: /\n"
+        robots_body = "User-agent: *\nAllow: /\n"
         response = make_response(robots_body)
         response.headers["Content-Type"] = "text/plain"
         return response

@@ -51,7 +51,7 @@
     <ul class="list">
       {% for item in external_links %}
         <li>
-          <a href="{{ item.url }}" target="_blank" rel="nofollow noopener">{{ item.label }}</a>
+          <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.label }}</a>
           <form method="post" action="/admin/external-links">
             <input type="hidden" name="action" value="delete">
             <input type="hidden" name="url" value="{{ item.url }}">

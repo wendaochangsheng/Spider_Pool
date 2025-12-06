@@ -32,7 +32,7 @@
     <p class="muted">以下链接会随配置实时更新。</p>
     <div class="link-grid">
       {% for item in dynamic_links %}
-        <a class="link-chip" href="{{ item.url }}" {% if item.external %}rel="nofollow noopener" target="_blank"{% endif %}>{{ item.label }}</a>
+        <a class="link-chip" href="{{ item.url }}" {% if item.external %}rel="noopener" target="_blank"{% endif %}>{{ item.label }}</a>
       {% else %}
         <p class="muted">暂无可用链接。</p>
       {% endfor %}
