@@ -62,6 +62,7 @@
 
   <section class="panel">
     <h2>曝光外链</h2>
+    <p class="muted">新增后立即参与页面动态互链，无需重新生成页面。</p>
     <form method="post" action="/admin/external-links">
       <label>名称
         <input type="text" name="label" placeholder="品牌或项目名">
@@ -102,6 +103,21 @@
       </label>
       <button type="submit">保存配置</button>
     </form>
+  </section>
+
+  <section class="panel">
+    <h2>AI 调用记录</h2>
+    <p class="muted">用于排查 DeepSeek 生成问题，记录最近 50 条调用结果。</p>
+    <div class="log-window">
+      {% for item in ai_logs|reverse %}
+        <div class="log-entry {{ item.level }}">
+          <strong>[{{ item.level|upper }}]</strong> {{ item.timestamp or '' }} · {{ item.message }}
+          {% if item.meta %}<div class="muted small">{{ item.meta }}</div>{% endif %}
+        </div>
+      {% else %}
+        <p class="muted">暂无调用记录。</p>
+      {% endfor %}
+    </div>
   </section>
 </div>
 

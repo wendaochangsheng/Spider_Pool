@@ -3,19 +3,22 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import textwrap
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import requests
+
+from .storage import record_ai_event
 
 DEEPSEEK_URL = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
 
 
-def _call_deepseek(prompt: str, model: str) -> Dict[str, Any] | None:
+def _call_deepseek(prompt: str, model: str) -> Tuple[Dict[str, Any] | None, str | None]:
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
-        return None
+        return None, "缺少 DEEPSEEK_API_KEY 环境变量"
 
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", model),
@@ -34,9 +37,30 @@ def _call_deepseek(prompt: str, model: str) -> Dict[str, Any] | None:
         "Content-Type": "application/json",
     }
 
-    response = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=45)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=45)
+        response.raise_for_status()
+        return response.json(), None
+    except Exception as exc:  # pragma: no cover - requests errors
+        return None, str(exc)
+
+
+def _normalize_json_text(content: str) -> str | None:
+    cleaned = content.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
+        cleaned = cleaned.split("```", 1)[0].strip()
+
+    if "{" in cleaned and "}" in cleaned:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        cleaned = cleaned[start : end + 1]
+
+    if not cleaned.startswith("{"):
+        return None
+
+    return cleaned
 
 
 def _structured_payload(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> str:
@@ -55,6 +79,7 @@ def _structured_payload(topic: str, keywords: List[str], host: str, links: List[
           - 文风像行业资讯稿，避免夸张用语。
           - 结合站点 {host} 的语境，自然地描述主题与关键词的联系。
           - 若存在下列链接，请合理过渡后提及：\n{links_text or '无特定链接'}。
+          - 若收到类似 “pool-1234” 或仅含数字的占位词，请改写成自然、正规、无数字堆砌的主题再输出。
           - 禁止输出 markdown、HTML 或额外解释，只能返回 JSON。
         """
     ).strip()
@@ -133,22 +158,100 @@ def _fallback_article(topic: str, keywords: List[str], links: List[Dict[str, Any
         "generated_at": datetime.utcnow().isoformat(),
         "generator": "local",
         "model": "template",
+        "topic": formal_topic,
     }
 
 
+def _formalize_topic(raw_topic: str, keywords: List[str], host: str) -> str:
+    topic = (raw_topic or "").strip()
+    if not topic:
+        topic = random.choice([
+            "行业趋势速览",
+            "热门话题精选",
+            "应用体验解读",
+            "产品动态聚合",
+        ])
+
+    lowered = topic.lower()
+    if re.fullmatch(r"(pool|page)[\s_-]*\d{3,5}", lowered) or re.fullmatch(r"\d{3,6}", lowered):
+        base = (keywords[0] if keywords else "站点") or host.split(":")[0]
+        templates = [
+            f"{base} 主题解读",
+            f"{base} 体验速写",
+            f"{base} 热点汇编",
+            f"{base} 资讯脉络",
+        ]
+        topic = random.choice(templates)
+
+    return topic
+
+
+def _safe_title(title: str | None, topic: str) -> str:
+    candidate = (title or "").strip()
+    if not candidate:
+        candidate = topic
+
+    lowered = candidate.lower()
+    if re.search(r"pool[\s_-]*\d{3,5}", lowered):
+        replacements = [
+            f"{topic} 深度解读",
+            f"{topic} 主题速览",
+            f"{topic} 资讯要点",
+        ]
+        candidate = random.choice(replacements)
+
+    return candidate
+
+
 def generate_article(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> Dict[str, str]:
-    prompt = _structured_payload(topic, keywords, host, links)
+    formal_topic = _formalize_topic(topic, keywords, host)
+    prompt = _structured_payload(formal_topic, keywords, host, links)
+    print(f"[AI] 开始生成: topic='{topic}', keywords={keywords}, host='{host}'", flush=True)
+    print(f"[AI] 提示词片段: {prompt[:280]}...", flush=True)
     try:
-        response = _call_deepseek(prompt, os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"))
+        response, error = _call_deepseek(prompt, os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"))
         if response:
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
-            structured = json.loads(content)
+            print(f"[AI] 原始响应片段: {content[:320]}...", flush=True)
+            try:
+                normalized = _normalize_json_text(content)
+                if not normalized:
+                    raise json.JSONDecodeError("未找到可解析的 JSON 结构", content, 0)
+                print(f"[AI] 解析内容片段: {normalized[:280]}...", flush=True)
+                structured = json.loads(normalized)
+                structured["title"] = _safe_title(structured.get("title"), formal_topic)
+            except json.JSONDecodeError as exc:
+                record_ai_event(
+                    "DeepSeek 返回无法解析的内容",
+                    level="error",
+                    meta={"topic": topic, "keywords": keywords, "error": str(exc)},
+                )
+                print(f"[AI] JSON 解析失败: {exc}", flush=True)
+                return _fallback_article(formal_topic, keywords, links)
             article = _build_html(structured, links)
             article["generator"] = "deepseek"
             article["model"] = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+            article["topic"] = formal_topic
+            record_ai_event(
+                "DeepSeek 生成成功",
+                level="info",
+                meta={"topic": topic, "keywords": keywords, "model": article["model"]},
+            )
+            print("[AI] 生成完成，已写入内容。", flush=True)
             return article
-    except Exception:
-        # swallow error and fallback below
-        pass
+        if error:
+            record_ai_event(
+                "DeepSeek 调用失败",
+                level="error",
+                meta={"topic": topic, "keywords": keywords, "error": error},
+            )
+            print(f"[AI] 调用错误: {error}", flush=True)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        record_ai_event(
+            "DeepSeek 处理异常",
+            level="error",
+            meta={"topic": topic, "keywords": keywords, "error": str(exc)},
+        )
+        print(f"[AI] 异常: {exc}", flush=True)
 
-    return _fallback_article(topic, keywords, links)
+    return _fallback_article(formal_topic, keywords, links)

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ page.title }} · 内容矩阵{% endblock %}
+{% block title %}{{ page.title }} · 内容集{% endblock %}
 {% block content %}
 <article class="page">
   <header>
@@ -10,6 +10,17 @@
   </header>
   <section class="body" aria-label="page body">
     {{ page.body | safe }}
+  </section>
+  <section class="related-live">
+    <h3>动态互链 / 外链</h3>
+    <p class="muted">以下链接会随配置实时更新。</p>
+    <div class="link-grid">
+      {% for item in dynamic_links %}
+        <a class="link-chip" href="{{ item.url }}" {% if item.external %}rel="nofollow noopener" target="_blank"{% endif %}>{{ item.label }}</a>
+      {% else %}
+        <p class="muted">暂无可用链接。</p>
+      {% endfor %}
+    </div>
   </section>
 </article>
 {% endblock %}
