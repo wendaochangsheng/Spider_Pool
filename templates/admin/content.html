@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}内容生成{% endblock %}
+{% block content %}
+{% include "admin/nav.html" with context %}
+
+<div class="grid two-up">
+  <section class="panel">
+    <h2>批量生成</h2>
+    <form method="post" action="/admin/auto-build" id="auto-build-form" data-default-count="{{ settings.auto_page_count or 12 }}">
+      <label>数量
+        <input type="number" min="1" max="30" name="count" value="{{ settings.auto_page_count or 12 }}">
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="random" id="auto-random" value="1">
+        <span>随机主题 / 关键词</span>
+      </label>
+      <p class="muted">当前并发：{{ settings.ai_thread_count or 8 }} 线程；文章字数 {{ settings.article_min_words or 800 }}-{{ settings.article_max_words or 1500 }}。</p>
+      <button type="submit">立即批量生成</button>
+    </form>
+    <div id="auto-build-log" class="log-window">
+      <p class="muted">实时生成进度将显示在这里。</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>自定义页面</h2>
+    <form method="post" action="/admin/pages">
+      <label>页面标识（slug）
+        <input type="text" name="slug" placeholder="可留空自动生成">
+      </label>
+      <label>主题 / 话题
+        <input type="text" name="topic" placeholder="例如：内容专题速览">
+      </label>
+      <label>关键词（逗号分隔）
+        <input type="text" name="keywords" placeholder="长尾词1, 长尾词2">
+      </label>
+      <label>参考 URL（逗号分隔，可选）
+        <input type="text" name="reference_urls" placeholder="https://example.com/a, https://example.com/b">
+      </label>
+      <div class="inline-inputs">
+        <label>最小字数
+          <input type="number" name="min_words" min="200" placeholder="{{ settings.article_min_words or 800 }}">
+        </label>
+        <label>最大字数
+          <input type="number" name="max_words" min="400" placeholder="{{ settings.article_max_words or 1500 }}">
+        </label>
+      </div>
+      <button type="submit">生成 / 重新生成</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <h2>页面列表</h2>
+      <p class="muted">快速检索、再生成或删除单页，便于日常维护。</p>
+    </div>
+    <input type="search" id="page-filter" placeholder="输入关键词过滤" aria-label="过滤页面">
+  </div>
+  <div class="table">
+    <div class="row head">
+      <span>Slug</span>
+      <span>标题</span>
+      <span>浏览</span>
+      <span>操作</span>
+    </div>
+    {% for slug, page in pages.items() %}
+      <div class="row" data-filter-text="{{ slug }} {{ page.title }} {{ page.topic }}">
+        <span>{{ slug }}</span>
+        <span>{{ page.title }}</span>
+        <span>{{ stats_map.get(slug, 0) }}</span>
+        <span class="actions">
+          <a href="/p/{{ slug }}" target="_blank">查看</a>
+          <form method="post" action="/admin/pages/{{ slug }}/regenerate">
+            <button type="submit" class="link">再生成</button>
+          </form>
+          <form method="post" action="/admin/pages/{{ slug }}/delete">
+            <button type="submit" class="link warning">删除</button>
+          </form>
+        </span>
+      </div>
+    {% else %}
+      <p>暂无页面，可立即生成。</p>
+    {% endfor %}
+  </div>
+</section>
+{% block scripts %}
+  {{ super() }}
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const form = document.getElementById("auto-build-form");
+      if (!form) {
+        return;
+      }
+      const logWindow = document.getElementById("auto-build-log");
+      const submitButton = form.querySelector("button[type='submit']");
+      const randomToggle = document.getElementById("auto-random");
+      let source;
+
+      function appendLog(text) {
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+        entry.textContent = text;
+        logWindow.appendChild(entry);
+        logWindow.scrollTop = logWindow.scrollHeight;
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (source) {
+          source.close();
+        }
+        logWindow.innerHTML = "";
+        const count = parseInt(form.count.value, 10) || parseInt(form.dataset.defaultCount || "5", 10);
+        const randomMode = randomToggle && randomToggle.checked;
+        appendLog(`开始批量生成 ${count} 个页面${randomMode ? "（随机主题）" : ""}...`);
+        submitButton.disabled = true;
+        submitButton.textContent = "生成中...";
+
+        source = new EventSource(`/admin/auto-build/stream?count=${count}&random=${randomMode ? "1" : "0"}`);
+        source.onmessage = function (evt) {
+          try {
+            const payload = JSON.parse(evt.data);
+            if (payload.status === "done") {
+              appendLog("批量生成完成。");
+              submitButton.disabled = false;
+              submitButton.textContent = "立即批量生成";
+              source.close();
+              return;
+            }
+            const generator = payload.generator === "deepseek"
+              ? "DeepSeek"
+              : (payload.generator === "local" ? "模板" : (payload.generator || "未知"));
+            const topic = payload.topic ? ` · ${payload.topic}` : "";
+            const previewText = payload.preview ? ` · ${payload.preview}` : "";
+            appendLog(`(${payload.progress}/${payload.total}) ${payload.title}${topic} [${generator}]${previewText}`);
+          } catch (error) {
+            appendLog("解析进度信息时出错。");
+          }
+        };
+
+        source.onerror = function () {
+          appendLog("连接中断，尝试刷新页面或重试。");
+          submitButton.disabled = false;
+          submitButton.textContent = "立即批量生成";
+          if (source) {
+            source.close();
+          }
+        };
+      });
+
+      const filterInput = document.getElementById("page-filter");
+      const rows = document.querySelectorAll(".table .row:not(.head)");
+      if (filterInput) {
+        filterInput.addEventListener("input", function () {
+          const term = (filterInput.value || "").toLowerCase();
+          rows.forEach((row) => {
+            const text = row.dataset.filterText || "";
+            row.style.display = text.toLowerCase().includes(term) ? "grid" : "none";
+          });
+        });
+      }
+    });
+  </script>
+{% endblock %}
+{% endblock %}

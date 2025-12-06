@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}内容集 · {{ host }}{% endblock %}
+{% block title %}内容枢纽 · {{ host }}{% endblock %}
 {% block content %}
 <section class="hero">
   <div>
     <p class="label">{{ host }}</p>
-    <h2>内容节点速览</h2>
-    <p>生成和收集的长文内容聚合于此，方便快速浏览与分发，不暴露后台入口。</p>
+    <h2>内容矩阵概览</h2>
+    <p>精选长文与主题稿件集中呈现，风格保持资讯化与日常更新感，便于后续投放与分发。</p>
     <div class="badges">
       <span>默认关键词：{{ pool_settings.default_keywords | join(' · ') if pool_settings.default_keywords else '未设置' }}</span>
       <span>批量生成：{{ pool_settings.auto_page_count or 12 }}/次</span>
@@ -41,7 +41,7 @@
     <article class="card">
       <div class="card-header">
         <p class="label subtle">{{ page.host }}</p>
-        <span class="chip">{{ page.generator or '模板' }}</span>
+        <span class="chip">{{ page.topic or '主题稿件' }}</span>
       </div>
       <h3><a href="/p/{{ page.slug }}">{{ page.title or page.topic or page.slug }}</a></h3>
       <p>{{ page.excerpt or '动态内容节点' }}</p>
@@ -54,13 +54,13 @@
 
 <section class="panel">
   <h3>访问速览</h3>
-  <ul class="list two-col">
+  <div class="list two-col">
     {% for slug, count in stats.items() %}
-      <li><strong>{{ slug }}</strong> · {{ count }} 次访问</li>
+      <div class="stat-line"><strong>{{ slug }}</strong> · {{ count }} 次访问</div>
     {% else %}
-      <li>暂无统计，等待后续访问。</li>
+      <p>暂无统计，等待后续访问。</p>
     {% endfor %}
-  </ul>
+  </div>
 </section>
 
 <section class="panel">
@@ -74,6 +74,40 @@
     {% else %}
       <p class="muted">暂无外链，可在后台添加曝光链接。</p>
     {% endfor %}
+  </div>
+</section>
+
+<section class="grid two-up">
+  <div class="panel">
+    <div class="panel-header">
+      <h3>最新更新</h3>
+      <p class="muted">按更新时间排序的最近稿件，便于快速确认内容健康度。</p>
+    </div>
+    <ul class="list">
+      {% for page in latest_pages %}
+        <li>
+          <div>
+            <strong><a href="/p/{{ page.slug }}">{{ page.title or page.topic or page.slug }}</a></strong>
+            <div class="muted small">{{ page.updated_at or '刚创建' }} · 关键词：{{ page.keywords | join(' / ') }}</div>
+          </div>
+        </li>
+      {% else %}
+        <li>等待首批内容生成。</li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="panel">
+    <div class="panel-header">
+      <h3>热度榜</h3>
+      <p class="muted">基于访问统计，识别表现较好的主题，方便二次分发。</p>
+    </div>
+    <ol>
+      {% for slug, count in hottest %}
+        <li><a href="/p/{{ slug }}">{{ slug }}</a> · {{ count }} 次访问</li>
+      {% else %}
+        <li>暂无数据，等待搜索引导或投放。</li>
+      {% endfor %}
+    </ol>
   </div>
 </section>
 {% endblock %}
