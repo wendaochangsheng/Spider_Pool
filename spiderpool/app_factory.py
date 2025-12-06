@@ -4,6 +4,7 @@ import os
 import random
 import re
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -77,13 +78,25 @@ def create_app() -> Flask:
 
         update_data(_mutate)
 
-    def _ensure_page(slug: str, *, topic: str | None = None, keywords: List[str] | None = None, host: str | None = None, force: bool = False):
+    def _ensure_page(
+        slug: str,
+        *,
+        topic: str | None = None,
+        keywords: List[str] | None = None,
+        host: str | None = None,
+        min_words: int | None = None,
+        max_words: int | None = None,
+        references: List[str] | None = None,
+        force: bool = False,
+    ):
         data = load_data()
         page = data.get("pages", {}).get(slug)
         if not page:
             page = {"slug": slug}
 
         links = build_link_set(slug, data)
+
+        settings = data.get("settings", {})
 
         if topic:
             page["topic"] = topic
@@ -97,13 +110,23 @@ def create_app() -> Flask:
         needs_generation = force or not page.get("body")
 
         if needs_generation:
-            settings = data.get("settings", {})
             keyword_seed = page.get("keywords") or settings.get("default_keywords", [])
             if isinstance(keyword_seed, str):
                 keyword_seed = [item.strip() for item in keyword_seed.split(",") if item.strip()]
             topic_seed = page.get("topic") or slug.replace("-", " ")
             host_ref = host or page.get("host") or "pool.local"
-            article = generate_article(topic_seed, keyword_seed, host_ref, links)
+            article_min = max(int(min_words or settings.get("article_min_words", 800) or 800), 200)
+            article_max = max(int(max_words or settings.get("article_max_words", article_min + 400) or article_min + 400), article_min + 200)
+            reference_urls = references or []
+            article = generate_article(
+                topic_seed,
+                keyword_seed,
+                host_ref,
+                links,
+                min_words=article_min,
+                max_words=article_max,
+                reference_urls=reference_urls,
+            )
             page.update(article)
             page["links"] = links
             page["host"] = host_ref
@@ -293,8 +316,24 @@ def create_app() -> Flask:
         keywords = request.form.get("keywords", "")
         slug = request.form.get("slug")
         slug = slugify(slug or topic)
+        reference_urls = [item.strip() for item in request.form.get("reference_urls", "").split(",") if item.strip()]
+        try:
+            min_words = int(request.form.get("min_words")) if request.form.get("min_words") else None
+            max_words = int(request.form.get("max_words")) if request.form.get("max_words") else None
+        except ValueError:
+            min_words = None
+            max_words = None
         keywords_list = [item.strip() for item in keywords.split(",") if item.strip()]
-        page = _ensure_page(slug, topic=topic, keywords=keywords_list, host=request.host.split(":")[0], force=True)
+        page = _ensure_page(
+            slug,
+            topic=topic,
+            keywords=keywords_list,
+            host=request.host.split(":")[0],
+            min_words=min_words,
+            max_words=max_words,
+            references=reference_urls,
+            force=True,
+        )
         source_label = "DeepSeek" if page.get("generator") == "deepseek" else "本地模板"
         flash(f"页面已生成（{source_label}）", "success")
         return redirect(url_for("admin_dashboard"))
@@ -334,17 +373,26 @@ def create_app() -> Flask:
         keywords = request.form.get("default_keywords", "")
         model = request.form.get("deepseek_model", "deepseek-chat")
         language = request.form.get("language", "zh")
+        ai_threads = request.form.get("ai_thread_count", "8")
+        article_min = request.form.get("article_min_words", "800")
+        article_max = request.form.get("article_max_words", "1500")
         keyword_list = [item.strip() for item in keywords.split(",") if item.strip()]
 
         def _mutate(payload):
-            payload.setdefault("settings", {}).update(
+            settings = payload.setdefault("settings", {})
+            settings.update(
                 {
                     "auto_page_count": int(auto_count or 12),
                     "default_keywords": keyword_list,
                     "deepseek_model": model,
                     "language": language,
+                    "ai_thread_count": max(1, int(ai_threads or 8)),
+                    "article_min_words": max(200, int(article_min or 800)),
+                    "article_max_words": max(400, int(article_max or 1500)),
                 }
             )
+            if settings["article_max_words"] <= settings["article_min_words"]:
+                settings["article_max_words"] = settings["article_min_words"] + 200
 
         update_data(_mutate)
         flash("设置已保存", "success")
@@ -357,11 +405,19 @@ def create_app() -> Flask:
             return guard
         count = int(request.form.get("count", 5))
         host = request.host.split(":")[0]
+        data = load_data()
+        settings = data.get("settings", {})
+        max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         generated = []
-        for _ in range(min(count, 30)):
-            slug = slugify(f"pool-{random.randint(1000, 9999)}")
-            page = _ensure_page(slug, host=host, force=True)
-            generated.append(page.get("title", slug))
+        slugs = [slugify(f"pool-{random.randint(1000, 9999)}") for _ in range(min(count, 30))]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_ensure_page, slug, host=host, force=True): slug for slug in slugs}
+            for future in as_completed(futures):
+                try:
+                    page = future.result()
+                    generated.append(page.get("title", futures[future]))
+                except Exception:
+                    generated.append(futures[future])
         flash(f"已批量生成 {len(generated)} 个页面", "success")
         return redirect(url_for("admin_dashboard"))
 
@@ -377,22 +433,43 @@ def create_app() -> Flask:
             count = 5
         count = max(1, min(count, 30))
         host = request.host.split(":")[0]
+        data = load_data()
+        settings = data.get("settings", {})
+        max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
+        article_min = max(200, int(settings.get("article_min_words", 800) or 800))
+        article_max = max(article_min + 200, int(settings.get("article_max_words", article_min + 400) or article_min + 400))
 
         def _generate():
             yield "retry: 3000\n"
-            for idx in range(count):
-                slug = slugify(f"pool-{random.randint(1000, 9999)}")
-                page = _ensure_page(slug, host=host, force=True)
-                payload = {
-                    "progress": idx + 1,
-                    "total": count,
-                    "title": page.get("title", slug),
-                    "slug": slug,
-                    "updated_at": page.get("updated_at"),
-                    "generator": page.get("generator", "unknown"),
-                    "preview": (page.get("excerpt") or page.get("topic") or "")[:80],
+            slugs = [slugify(f"pool-{random.randint(1000, 9999)}") for _ in range(count)]
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _ensure_page,
+                        slug,
+                        host=host,
+                        min_words=article_min,
+                        max_words=article_max,
+                        force=True,
+                    ): slug
+                    for slug in slugs
                 }
-                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                for idx, future in enumerate(as_completed(futures)):
+                    slug = futures[future]
+                    try:
+                        page = future.result()
+                    except Exception:
+                        page = {"title": slug, "slug": slug, "excerpt": "生成失败"}
+                    payload = {
+                        "progress": idx + 1,
+                        "total": count,
+                        "title": page.get("title", slug),
+                        "slug": slug,
+                        "updated_at": page.get("updated_at"),
+                        "generator": page.get("generator", "unknown"),
+                        "preview": (page.get("excerpt") or page.get("topic") or "")[:80],
+                    }
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'status': 'done'})}\n\n"
 
         response = Response(stream_with_context(_generate()), mimetype="text/event-stream")

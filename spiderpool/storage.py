@@ -19,6 +19,9 @@ DEFAULT_DATA = {
         "default_keywords": [],
         "deepseek_model": "deepseek-chat",
         "language": "zh",
+        "ai_thread_count": 8,
+        "article_min_words": 800,
+        "article_max_words": 1500,
     },
 }
 
@@ -27,6 +30,8 @@ def _get_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
     _init_schema(conn)
     return conn
 
@@ -78,12 +83,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_default_settings(conn: sqlite3.Connection) -> None:
-    cur = conn.execute("SELECT COUNT(1) AS total FROM settings")
-    row = cur.fetchone()
-    if row and row["total"]:
+    cur = conn.execute("SELECT key FROM settings")
+    existing = {row["key"] for row in cur.fetchall()}
+    missing = {k: v for k, v in DEFAULT_DATA["settings"].items() if k not in existing}
+    if not missing:
         return
-    for key, value in DEFAULT_DATA["settings"].items():
-        conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", (key, json.dumps(value, ensure_ascii=False)))
+    conn.executemany(
+        "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+        [(key, json.dumps(value, ensure_ascii=False)) for key, value in missing.items()],
+    )
     conn.commit()
 
 

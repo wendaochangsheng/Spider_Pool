@@ -8,6 +8,7 @@
       <label>数量
         <input type="number" min="1" max="30" name="count" value="{{ settings.auto_page_count or 12 }}">
       </label>
+      <p class="muted">当前并发：{{ settings.ai_thread_count or 8 }} 线程；文章字数 {{ settings.article_min_words or 800 }}-{{ settings.article_max_words or 1500 }}。</p>
       <button type="submit">立即批量生成</button>
     </form>
     <div id="auto-build-log" class="log-window">
@@ -27,6 +28,17 @@
       <label>关键词（逗号分隔）
         <input type="text" name="keywords" placeholder="长尾词1, 长尾词2">
       </label>
+      <label>参考 URL（逗号分隔，可选）
+        <input type="text" name="reference_urls" placeholder="https://example.com/a, https://example.com/b">
+      </label>
+      <div class="inline-inputs">
+        <label>最小字数
+          <input type="number" name="min_words" min="200" placeholder="{{ settings.article_min_words or 800 }}">
+        </label>
+        <label>最大字数
+          <input type="number" name="max_words" min="400" placeholder="{{ settings.article_max_words or 1500 }}">
+        </label>
+      </div>
       <button type="submit">生成 / 重新生成</button>
     </form>
   </section>
@@ -101,6 +113,17 @@
       <label>批量生成数量
         <input type="number" name="auto_page_count" min="1" max="50" value="{{ settings.auto_page_count or 12 }}">
       </label>
+      <div class="inline-inputs">
+        <label>AI 线程并发
+          <input type="number" name="ai_thread_count" min="1" max="32" value="{{ settings.ai_thread_count or 8 }}">
+        </label>
+        <label>文章最小字数
+          <input type="number" name="article_min_words" min="200" value="{{ settings.article_min_words or 800 }}">
+        </label>
+        <label>文章最大字数
+          <input type="number" name="article_max_words" min="400" value="{{ settings.article_max_words or 1500 }}">
+        </label>
+      </div>
       <button type="submit">保存配置</button>
     </form>
   </section>

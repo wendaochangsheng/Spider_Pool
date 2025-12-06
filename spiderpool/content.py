@@ -15,7 +15,7 @@ from .storage import record_ai_event
 DEEPSEEK_URL = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
 
 
-def _call_deepseek(prompt: str, model: str) -> Tuple[Dict[str, Any] | None, str | None]:
+def _call_deepseek(prompt: str, model: str, *, max_tokens: int) -> Tuple[Dict[str, Any] | None, str | None]:
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         return None, "缺少 DEEPSEEK_API_KEY 环境变量"
@@ -30,7 +30,7 @@ def _call_deepseek(prompt: str, model: str) -> Tuple[Dict[str, Any] | None, str 
             },
         ],
         "temperature": 0.8,
-        "max_tokens": 900,
+        "max_tokens": max_tokens,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -63,9 +63,55 @@ def _normalize_json_text(content: str) -> str | None:
     return cleaned
 
 
-def _structured_payload(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> str:
+def _clean_text(html: str, limit: int = 1200) -> str:
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()[:limit]
+
+
+def _read_reference_sources(urls: List[str], limit_per: int = 1200) -> str | None:
+    snippets: List[str] = []
+    for url in urls[:5]:
+        try:
+            response = requests.get(
+                url,
+                timeout=8,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; SpiderPoolBot/1.0)"},
+            )
+            response.raise_for_status()
+            cleaned = _clean_text(response.text, limit_per)
+            if cleaned:
+                snippets.append(f"{url}: {cleaned}")
+        except Exception as exc:  # pragma: no cover - network variability
+            record_ai_event(
+                "参考源抓取失败",
+                level="warning",
+                meta={"url": url, "error": str(exc)},
+            )
+    if not snippets:
+        return None
+    combined = "\n".join(snippets[:3])
+    return combined[: limit_per * 3]
+
+
+def _structured_payload(
+    topic: str,
+    keywords: List[str],
+    host: str,
+    links: List[Dict[str, Any]],
+    *,
+    min_words: int,
+    max_words: int,
+    reference_context: str | None,
+) -> str:
     keyword_text = ", ".join(keywords) if keywords else "泛行业词"
     links_text = "\n".join(f"- {item['label']}: {item['url']}" for item in links)
+    word_hint = f"全文控制在 {min_words}-{max_words} 字之间，保持自然中文表达。"
+    reference_hint = (
+        f"可参考以下摘录补充语料：\n{reference_context}"
+        if reference_context
+        else "不必强调数据源，保持内容自然顺滑。"
+    )
     return textwrap.dedent(
         f"""
         你是一名中文 SEO 文案，需要根据主题“{topic}”与关键词「{keyword_text}」生成完全原创、可读性高的长文。
@@ -76,9 +122,10 @@ def _structured_payload(topic: str, keywords: List[str], host: str, links: List[
           bullets (array[string]): 3-5 个重点提示，避免重复。
           closing (string): 1 段收尾总结。
         写作要求：
-          - 文风像行业资讯稿，避免夸张用语。
+          - 文风像行业资讯稿，避免夸张用语，{word_hint}
           - 结合站点 {host} 的语境，自然地描述主题与关键词的联系。
           - 若存在下列链接，请合理过渡后提及：\n{links_text or '无特定链接'}。
+          - {reference_hint}
           - 若收到类似 “pool-1234” 或仅含数字的占位词，请改写成自然、正规、无数字堆砌的主题再输出。
           - 禁止输出 markdown、HTML 或额外解释，只能返回 JSON。
         """
@@ -203,13 +250,45 @@ def _safe_title(title: str | None, topic: str) -> str:
     return candidate
 
 
-def generate_article(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> Dict[str, str]:
+def generate_article(
+    topic: str,
+    keywords: List[str],
+    host: str,
+    links: List[Dict[str, Any]],
+    *,
+    min_words: int | None = None,
+    max_words: int | None = None,
+    reference_urls: List[str] | None = None,
+) -> Dict[str, str]:
     formal_topic = _formalize_topic(topic, keywords, host)
-    prompt = _structured_payload(formal_topic, keywords, host, links)
+    min_words_env = int(os.environ.get("ARTICLE_MIN_WORDS", 0)) if os.environ.get("ARTICLE_MIN_WORDS") else None
+    max_words_env = int(os.environ.get("ARTICLE_MAX_WORDS", 0)) if os.environ.get("ARTICLE_MAX_WORDS") else None
+    min_words = max(min_words or min_words_env or 800, 200)
+    max_words = max(max_words or max_words_env or min_words + 400, min_words + 200)
+    max_tokens = max(800, min(max_words * 2, 3500))
+    reference_urls = reference_urls or (
+        [item.strip() for item in os.environ.get("REFERENCE_URLS", "").split(",") if item.strip()]
+        if os.environ.get("REFERENCE_URLS")
+        else []
+    )
+    reference_context = _read_reference_sources(reference_urls)
+    prompt = _structured_payload(
+        formal_topic,
+        keywords,
+        host,
+        links,
+        min_words=min_words,
+        max_words=max_words,
+        reference_context=reference_context,
+    )
     print(f"[AI] 开始生成: topic='{topic}', keywords={keywords}, host='{host}'", flush=True)
     print(f"[AI] 提示词片段: {prompt[:280]}...", flush=True)
     try:
-        response, error = _call_deepseek(prompt, os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"))
+        response, error = _call_deepseek(
+            prompt,
+            os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+            max_tokens=max_tokens,
+        )
         if response:
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             print(f"[AI] 原始响应片段: {content[:320]}...", flush=True)
@@ -235,7 +314,14 @@ def generate_article(topic: str, keywords: List[str], host: str, links: List[Dic
             record_ai_event(
                 "DeepSeek 生成成功",
                 level="info",
-                meta={"topic": topic, "keywords": keywords, "model": article["model"]},
+                meta={
+                    "topic": topic,
+                    "keywords": keywords,
+                    "model": article["model"],
+                    "min_words": min_words,
+                    "max_words": max_words,
+                    "references": reference_urls,
+                },
             )
             print("[AI] 生成完成，已写入内容。", flush=True)
             return article
