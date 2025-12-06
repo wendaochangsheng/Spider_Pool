@@ -79,6 +79,7 @@ def _structured_payload(topic: str, keywords: List[str], host: str, links: List[
           - 文风像行业资讯稿，避免夸张用语。
           - 结合站点 {host} 的语境，自然地描述主题与关键词的联系。
           - 若存在下列链接，请合理过渡后提及：\n{links_text or '无特定链接'}。
+          - 若收到类似 “pool-1234” 或仅含数字的占位词，请改写成自然、正规、无数字堆砌的主题再输出。
           - 禁止输出 markdown、HTML 或额外解释，只能返回 JSON。
         """
     ).strip()
@@ -157,11 +158,54 @@ def _fallback_article(topic: str, keywords: List[str], links: List[Dict[str, Any
         "generated_at": datetime.utcnow().isoformat(),
         "generator": "local",
         "model": "template",
+        "topic": formal_topic,
     }
 
 
+def _formalize_topic(raw_topic: str, keywords: List[str], host: str) -> str:
+    topic = (raw_topic or "").strip()
+    if not topic:
+        topic = random.choice([
+            "行业趋势速览",
+            "热门话题精选",
+            "应用体验解读",
+            "产品动态聚合",
+        ])
+
+    lowered = topic.lower()
+    if re.fullmatch(r"(pool|page)[\s_-]*\d{3,5}", lowered) or re.fullmatch(r"\d{3,6}", lowered):
+        base = (keywords[0] if keywords else "站点") or host.split(":")[0]
+        templates = [
+            f"{base} 主题解读",
+            f"{base} 体验速写",
+            f"{base} 热点汇编",
+            f"{base} 资讯脉络",
+        ]
+        topic = random.choice(templates)
+
+    return topic
+
+
+def _safe_title(title: str | None, topic: str) -> str:
+    candidate = (title or "").strip()
+    if not candidate:
+        candidate = topic
+
+    lowered = candidate.lower()
+    if re.search(r"pool[\s_-]*\d{3,5}", lowered):
+        replacements = [
+            f"{topic} 深度解读",
+            f"{topic} 主题速览",
+            f"{topic} 资讯要点",
+        ]
+        candidate = random.choice(replacements)
+
+    return candidate
+
+
 def generate_article(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> Dict[str, str]:
-    prompt = _structured_payload(topic, keywords, host, links)
+    formal_topic = _formalize_topic(topic, keywords, host)
+    prompt = _structured_payload(formal_topic, keywords, host, links)
     print(f"[AI] 开始生成: topic='{topic}', keywords={keywords}, host='{host}'", flush=True)
     print(f"[AI] 提示词片段: {prompt[:280]}...", flush=True)
     try:
@@ -175,6 +219,7 @@ def generate_article(topic: str, keywords: List[str], host: str, links: List[Dic
                     raise json.JSONDecodeError("未找到可解析的 JSON 结构", content, 0)
                 print(f"[AI] 解析内容片段: {normalized[:280]}...", flush=True)
                 structured = json.loads(normalized)
+                structured["title"] = _safe_title(structured.get("title"), formal_topic)
             except json.JSONDecodeError as exc:
                 record_ai_event(
                     "DeepSeek 返回无法解析的内容",
@@ -182,10 +227,11 @@ def generate_article(topic: str, keywords: List[str], host: str, links: List[Dic
                     meta={"topic": topic, "keywords": keywords, "error": str(exc)},
                 )
                 print(f"[AI] JSON 解析失败: {exc}", flush=True)
-                return _fallback_article(topic, keywords, links)
+                return _fallback_article(formal_topic, keywords, links)
             article = _build_html(structured, links)
             article["generator"] = "deepseek"
             article["model"] = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+            article["topic"] = formal_topic
             record_ai_event(
                 "DeepSeek 生成成功",
                 level="info",
@@ -208,4 +254,4 @@ def generate_article(topic: str, keywords: List[str], host: str, links: List[Dic
         )
         print(f"[AI] 异常: {exc}", flush=True)
 
-    return _fallback_article(topic, keywords, links)
+    return _fallback_article(formal_topic, keywords, links)

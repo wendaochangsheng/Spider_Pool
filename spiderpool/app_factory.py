@@ -108,7 +108,7 @@ def create_app() -> Flask:
             page["links"] = links
             page["host"] = host_ref
             page["keywords"] = keyword_seed
-            page["topic"] = topic_seed
+            page["topic"] = article.get("topic", topic_seed)
             page["updated_at"] = datetime.utcnow().isoformat()
 
             data.setdefault("pages", {})[slug] = page
