@@ -43,6 +43,17 @@ def _is_enabled(value: str | None) -> bool:
     return value.lower() in {"1", "true", "on", "yes", "y"}
 
 
+def _normalize_host(hostname: str | None) -> str:
+    if not hostname:
+        return ""
+
+    hostname = hostname.lower()
+    parts = hostname.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return hostname
+
+
 def slugify(text: str) -> str:
     slug = SLUG_PATTERN.sub("-", text.lower()).strip("-")
     return slug or f"page-{random.randint(1000, 9999)}"
@@ -84,6 +95,9 @@ def create_app() -> Flask:
         static_folder=str(STATIC_DIR),
     )
     app.secret_key = os.environ.get("SPIDERPOOL_SECRET", os.urandom(24))
+
+    def _current_host() -> str:
+        return _normalize_host(request.host.split(":")[0])
 
     @app.context_processor
     def inject_globals():
@@ -129,21 +143,21 @@ def create_app() -> Flask:
         if not hostname:
             return
 
+        normalized = _normalize_host(hostname)
         existing_domains = load_data().get("domains", [])
-        if any(item.get("host") == hostname for item in existing_domains):
+        if any(_normalize_host(item.get("host")) == normalized for item in existing_domains):
             return
 
         def _mutate(payload):
             domains = payload.setdefault("domains", [])
-            if not any(item.get("host") == hostname for item in domains):
-                domains.append({"host": hostname, "label": hostname, "topic": ""})
+            if not any(_normalize_host(item.get("host")) == normalized for item in domains):
+                domains.append({"host": normalized or hostname, "label": hostname, "topic": ""})
 
         update_data(_mutate)
 
     def _filter_pages_by_host(host: str, data: dict) -> list[dict]:
         pages = list(data.get("pages", {}).values())
-        host_pages = [page for page in pages if page.get("host") == host]
-        return host_pages or pages
+        return pages
 
     def _resolve_random_page(host: str, path_hint: str | None = None) -> dict:
         data = load_data()
@@ -189,7 +203,7 @@ def create_app() -> Flask:
             if isinstance(keyword_seed, str):
                 keyword_seed = [item.strip() for item in keyword_seed.split(",") if item.strip()]
             topic_seed = page.get("topic") or slug.replace("-", " ")
-            host_ref = host or page.get("host") or "pool.local"
+            host_ref = _normalize_host(host or page.get("host")) or "pool.local"
             article_min = max(int(min_words or settings.get("article_min_words", 800) or 800), 200)
             article_max = max(int(max_words or settings.get("article_max_words", article_min + 400) or article_min + 400), article_min + 200)
             reference_urls = references or []
@@ -233,7 +247,7 @@ def create_app() -> Flask:
 
     @app.route("/")
     def landing():
-        host = request.host.split(":")[0]
+        host = _current_host()
         _register_host(host)
         data = load_data()
         pages = _filter_pages_by_host(host, data)
@@ -280,7 +294,7 @@ def create_app() -> Flask:
 
     @app.route("/p/<slug>")
     def show_page(slug: str):
-        host = request.host.split(":")[0]
+        host = _current_host()
         _register_host(host)
         page = _ensure_page(slug, host=host)
         record_view(slug, user_agent=request.headers.get("User-Agent"))
@@ -296,7 +310,7 @@ def create_app() -> Flask:
 
     @app.errorhandler(404)
     def fallback_page(error):  # noqa: ANN001
-        host = request.host.split(":")[0]
+        host = _current_host()
         _register_host(host)
         page = _resolve_random_page(host)
         record_view(page.get("slug"), user_agent=request.headers.get("User-Agent"))
@@ -308,7 +322,7 @@ def create_app() -> Flask:
         if any_path.startswith(reserved_prefixes) or any_path in {"favicon.ico"}:
             return make_response("未找到内容", 404)
 
-        host = request.host.split(":")[0]
+        host = _current_host()
         _register_host(host)
         slug_hint = any_path.rsplit("/", 1)[-1]
         page = _resolve_random_page(host, slug_hint)
@@ -505,7 +519,7 @@ def create_app() -> Flask:
             slug,
             topic=topic,
             keywords=keywords_list,
-            host=request.host.split(":")[0],
+            host=_current_host(),
             min_words=min_words,
             max_words=max_words,
             references=reference_urls,
@@ -520,7 +534,7 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        page = _ensure_page(slug, host=request.host.split(":")[0], force=True)
+        page = _ensure_page(slug, host=_current_host(), force=True)
         source_label = "DeepSeek" if page.get("generator") == "deepseek" else "本地模板"
         flash(f"页面已重新生成（{source_label}）", "success")
         return redirect(url_for("admin_content"))
@@ -587,7 +601,7 @@ def create_app() -> Flask:
         default_count = int(settings.get("auto_page_count", 8) or 8)
         count = int(request.form.get("count", default_count))
         random_mode = _is_enabled(request.form.get("random"))
-        host = request.host.split(":")[0]
+        host = _current_host()
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         generated = []
         jobs = []
@@ -635,7 +649,7 @@ def create_app() -> Flask:
         except (TypeError, ValueError):
             count = default_count
         count = max(1, min(count, 30))
-        host = request.host.split(":")[0]
+        host = _current_host()
         random_mode = _is_enabled(request.args.get("random"))
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         article_min = max(200, int(settings.get("article_min_words", 800) or 800))
@@ -693,7 +707,7 @@ def create_app() -> Flask:
 
     @app.route("/api/pages")
     def api_pages():
-        host = request.host.split(":")[0]
+        host = _current_host()
         data = load_data()
         pages = [
             {
