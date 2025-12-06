@@ -24,7 +24,7 @@ from flask import (
     url_for,
 )
 
-from .content import generate_article
+from .content import generate_article, request_ai_theme
 from .links import build_link_set
 from .storage import load_data, save_data, update_data, record_view
 
@@ -53,7 +53,17 @@ TEMPLATE_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
 
-def _random_theme(settings: dict, domains: list) -> tuple[str, list[str], str]:
+def _random_theme(settings: dict, domains: list, host: str) -> tuple[str, list[str], str]:
+    log_to_terminal = bool(settings.get("ai_console_log", True))
+    ai_topic, ai_keywords = request_ai_theme(
+        host,
+        model=settings.get("deepseek_model", "deepseek-chat"),
+        log_to_terminal=log_to_terminal,
+    )
+    if ai_topic and ai_keywords:
+        slug = slugify(f"{ai_keywords[0]}-{random.randint(1000, 9999)}")
+        return ai_topic, ai_keywords, slug
+
     domain_topics = [item.get("topic") for item in domains if item.get("topic")]
     keyword_pool = [kw for kw in settings.get("default_keywords", []) if kw]
     base_seed = random.choice(domain_topics + keyword_pool + ["行业", "产品", "体验", "趋势", "方案"])
@@ -234,6 +244,13 @@ def create_app() -> Flask:
         stats_map = data.get("view_stats", {})
         hottest = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)[:6]
         stats = data.get("view_stats", {})
+        slug_lookup = {page.get("slug"): page for page in pages}
+        leaderboard = []
+        for slug, count in stats.items():
+            page = slug_lookup.get(slug, {})
+            label = page.get("topic") or page.get("title") or slug
+            leaderboard.append({"slug": slug, "count": count, "label": label})
+        leaderboard = sorted(leaderboard, key=lambda item: item["count"], reverse=True)
         shuffled_links = data.get("external_links", [])[:]
         random.shuffle(shuffled_links)
         return render_template(
@@ -241,6 +258,7 @@ def create_app() -> Flask:
             pages=spotlight,
             page_total=len(pages),
             stats=stats,
+            leaderboard=leaderboard,
             host=host,
             external_links=shuffled_links[:8],
             latest_pages=latest_pages,
@@ -324,13 +342,33 @@ def create_app() -> Flask:
         if guard:
             return guard
         data, pages, stats_map, sorted_stats, _, domain_stats = _admin_payload()
+        try:
+            current_page = max(1, int(request.args.get("page", 1)))
+        except (TypeError, ValueError):
+            current_page = 1
+        per_page = 20
+        page_items = sorted(
+            pages.values(),
+            key=lambda item: item.get("updated_at") or item.get("generated_at") or "",
+            reverse=True,
+        )
+        total_pages = max(1, (len(page_items) + per_page - 1) // per_page)
+        start = (current_page - 1) * per_page
+        page_slice = page_items[start : start + per_page]
         return render_template(
             "admin/content.html",
             pages=pages,
+            page_items=page_slice,
             stats=sorted_stats,
             stats_map=stats_map,
             domain_stats=domain_stats,
             settings=data.get("settings", {}),
+            pagination={
+                "current": current_page,
+                "total": total_pages,
+                "per_page": per_page,
+                "count": len(page_items),
+            },
             active="content",
         )
 
@@ -519,7 +557,7 @@ def create_app() -> Flask:
         jobs = []
         if random_mode:
             for _ in range(min(count, 30)):
-                topic, keywords, slug = _random_theme(settings, data.get("domains", []))
+                topic, keywords, slug = _random_theme(settings, data.get("domains", []), host)
                 jobs.append({"slug": slug, "topic": topic, "keywords": keywords})
         else:
             jobs = [
@@ -571,7 +609,7 @@ def create_app() -> Flask:
             jobs = []
             if random_mode:
                 for _ in range(count):
-                    topic, keywords, slug = _random_theme(settings, data.get("domains", []))
+                    topic, keywords, slug = _random_theme(settings, data.get("domains", []), host)
                     jobs.append({"slug": slug, "topic": topic, "keywords": keywords})
             else:
                 jobs = [

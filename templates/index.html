@@ -55,11 +55,11 @@
 <section class="panel">
     <h3>阅读榜单</h3>
     <div class="list two-col">
-      {% for slug, count in stats.items() %}
-        <div class="stat-line"><strong>{{ slug }}</strong> · {{ count }} 次访问</div>
-    {% else %}
-      <p>暂无统计，等待后续访问。</p>
-    {% endfor %}
+      {% for item in leaderboard %}
+        <div class="stat-line"><strong><a href="/p/{{ item.slug }}">{{ item.label }}</a></strong> · {{ item.count }} 次访问</div>
+      {% else %}
+        <p>暂无统计，等待后续访问。</p>
+      {% endfor %}
   </div>
 </section>
 

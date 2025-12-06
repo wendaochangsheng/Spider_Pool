@@ -65,10 +65,11 @@
       <span>浏览</span>
       <span>操作</span>
     </div>
-    {% for slug, page in pages.items() %}
+    {% for page in page_items %}
+      {% set slug = page.slug or page.get('slug') %}
       <div class="row" data-filter-text="{{ slug }} {{ page.title }} {{ page.topic }}">
         <span>{{ slug }}</span>
-        <span>{{ page.title }}</span>
+        <span>{{ page.title or page.topic }}</span>
         <span>{{ stats_map.get(slug, 0) }}</span>
         <span class="actions">
           <a href="/p/{{ slug }}" target="_blank">查看</a>
@@ -83,6 +84,22 @@
     {% else %}
       <p>暂无页面，可立即生成。</p>
     {% endfor %}
+  </div>
+  <div class="pagination">
+    <div class="muted">共 {{ pagination.count }} 条 · 每页 {{ pagination.per_page }} 条</div>
+    <div class="pager">
+      {% if pagination.current > 1 %}
+        <a href="?page={{ pagination.current - 1 }}" class="link">上一页</a>
+      {% else %}
+        <span class="muted">上一页</span>
+      {% endif %}
+      <span>第 {{ pagination.current }} / {{ pagination.total }} 页</span>
+      {% if pagination.current < pagination.total %}
+        <a href="?page={{ pagination.current + 1 }}" class="link">下一页</a>
+      {% else %}
+        <span class="muted">下一页</span>
+      {% endif %}
+    </div>
   </div>
 </section>
 {% block scripts %}
