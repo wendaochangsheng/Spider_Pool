@@ -129,6 +129,10 @@ def create_app() -> Flask:
         if not hostname:
             return
 
+        existing_domains = load_data().get("domains", [])
+        if any(item.get("host") == hostname for item in existing_domains):
+            return
+
         def _mutate(payload):
             domains = payload.setdefault("domains", [])
             if not any(item.get("host") == hostname for item in domains):
