@@ -311,13 +311,15 @@ def get_page(slug: str) -> Dict[str, Any] | None:
 
 def record_view(slug: str, *, user_agent: str | None = None) -> None:
     conn = _get_connection()
-    conn.execute(
-        "INSERT INTO view_stats(slug, views) VALUES(?, 1) ON CONFLICT(slug) DO UPDATE SET views = views + 1",
-        (slug,),
-    )
+    try:
+        conn.execute(
+            "INSERT INTO view_stats(slug, views) VALUES(?, 1) ON CONFLICT(slug) DO UPDATE SET views = views + 1",
+            (slug,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     record_bot_hit(user_agent)
-    conn.commit()
-    conn.close()
 
 
 def record_ai_event(message: str, *, level: str = "info", meta: Dict[str, Any] | None = None) -> None:
