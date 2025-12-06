@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}内容矩阵 · {{ host }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <h2>内容矩阵面板</h2>
+  <p>统一调度多个域名的长文节点，自动生成并互链，保持站点内容的持续活跃，便于内部观测和维护。</p>
+</section>
+<section class="grid">
+  {% for page in pages %}
+    <article class="card">
+      <h3><a href="/p/{{ page.slug }}">{{ page.title or page.topic or page.slug }}</a></h3>
+      <p>{{ page.excerpt or '动态内容节点' }}</p>
+      <div class="meta">更新：{{ page.updated_at or '未知' }}</div>
+    </article>
+  {% else %}
+    <p>暂无内容，可在后台快速生成。</p>
+  {% endfor %}
+</section>
+<section class="panel">
+  <h3>访问速览</h3>
+  <ul>
+    {% for slug, count in stats.items() %}
+      <li><strong>{{ slug }}</strong> · {{ count }} 次访问</li>
+    {% else %}
+      <li>暂无统计，等待后续访问。</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

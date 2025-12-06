@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}后台控制台{% endblock %}
+{% block content %}
+<div class="admin-grid">
+  <section class="panel">
+    <h2>批量生成</h2>
+    <form method="post" action="/admin/auto-build" id="auto-build-form" data-default-count="{{ settings.auto_page_count or 12 }}">
+      <label>数量
+        <input type="number" min="1" max="30" name="count" value="{{ settings.auto_page_count or 12 }}">
+      </label>
+      <button type="submit">立即批量生成</button>
+    </form>
+    <div id="auto-build-log" class="log-window">
+      <p class="muted">实时生成进度将显示在这里。</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>自定义页面</h2>
+    <form method="post" action="/admin/pages">
+      <label>页面标识（slug）
+        <input type="text" name="slug" placeholder="可留空自动生成">
+      </label>
+      <label>主题 / 话题
+        <input type="text" name="topic" placeholder="例如：高频抓取策略">
+      </label>
+      <label>关键词（逗号分隔）
+        <input type="text" name="keywords" placeholder="长尾词1, 长尾词2">
+      </label>
+      <button type="submit">生成 / 重新生成</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>域名池</h2>
+    <form method="post" action="/admin/domains">
+      <label>域名
+        <input type="text" name="host" placeholder="example.com" required>
+      </label>
+      <label>别名
+        <input type="text" name="label" placeholder="展示名称">
+      </label>
+      <label>主题特征
+        <input type="text" name="topic" placeholder="应用场景">
+      </label>
+      <button type="submit">保存域名</button>
+    </form>
+    <ul class="list">
+      {% for domain in domains %}
+        <li>
+          <strong>{{ domain.label }}</strong> · {{ domain.host }} · {{ domain.topic or '-' }}
+          <form method="post" action="/admin/domains/delete">
+            <input type="hidden" name="host" value="{{ domain.host }}">
+            <button type="submit" class="link">移除</button>
+          </form>
+        </li>
+      {% else %}
+        <li>暂无域名，可添加任意泛解析域。</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>曝光外链</h2>
+    <form method="post" action="/admin/external-links">
+      <label>名称
+        <input type="text" name="label" placeholder="品牌或项目名">
+      </label>
+      <label>URL
+        <input type="url" name="url" placeholder="https://" required>
+      </label>
+      <button type="submit">加入曝光列表</button>
+    </form>
+    <ul class="list">
+      {% for item in external_links %}
+        <li>
+          <a href="{{ item.url }}" target="_blank" rel="nofollow noopener">{{ item.label }}</a>
+          <form method="post" action="/admin/external-links">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="url" value="{{ item.url }}">
+            <button type="submit" class="link">删除</button>
+          </form>
+        </li>
+      {% else %}
+        <li>暂无外链，将自动互链内部页面。</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>全局设置</h2>
+    <form method="post" action="/admin/settings">
+      <label>默认关键词（逗号分隔）
+        <input type="text" name="default_keywords" value="{{ settings.default_keywords | join(', ') if settings.default_keywords else '' }}">
+      </label>
+      <label>DeepSeek 模型
+        <input type="text" name="deepseek_model" value="{{ settings.deepseek_model or 'deepseek-chat' }}">
+      </label>
+      <input type="hidden" name="language" value="{{ settings.language or 'zh' }}">
+      <label>批量生成数量
+        <input type="number" name="auto_page_count" min="1" max="50" value="{{ settings.auto_page_count or 12 }}">
+      </label>
+      <button type="submit">保存配置</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>页面列表</h2>
+  <div class="table">
+    <div class="row head">
+      <span>Slug</span>
+      <span>标题</span>
+      <span>浏览</span>
+      <span>操作</span>
+    </div>
+    {% for slug, page in pages.items() %}
+      <div class="row">
+        <span>{{ slug }}</span>
+        <span>{{ page.title }}</span>
+        <span>{{ stats_map.get(slug, 0) }}</span>
+        <span>
+          <a href="/p/{{ slug }}" target="_blank">查看</a>
+          <form method="post" action="/admin/pages/{{ slug }}/regenerate">
+            <button type="submit" class="link">再生成</button>
+          </form>
+          <form method="post" action="/admin/pages/{{ slug }}/delete">
+            <button type="submit" class="link warning">删除</button>
+          </form>
+        </span>
+      </div>
+    {% else %}
+      <p>暂无页面，可立即生成。</p>
+    {% endfor %}
+  </div>
+</section>
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const form = document.getElementById("auto-build-form");
+      if (!form) {
+        return;
+      }
+      const logWindow = document.getElementById("auto-build-log");
+      const submitButton = form.querySelector("button[type='submit']");
+      let source;
+
+      function appendLog(text) {
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+        entry.textContent = text;
+        logWindow.appendChild(entry);
+        logWindow.scrollTop = logWindow.scrollHeight;
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (source) {
+          source.close();
+        }
+        logWindow.innerHTML = "";
+        const count = parseInt(form.count.value, 10) || parseInt(form.dataset.defaultCount || "5", 10);
+        appendLog(`开始批量生成 ${count} 个页面...`);
+        submitButton.disabled = true;
+        submitButton.textContent = "生成中...";
+
+        source = new EventSource(`/admin/auto-build/stream?count=${count}`);
+        source.onmessage = function (evt) {
+          try {
+            const payload = JSON.parse(evt.data);
+            if (payload.status === "done") {
+              appendLog("批量生成完成。");
+              submitButton.disabled = false;
+              submitButton.textContent = "立即批量生成";
+              source.close();
+              return;
+            }
+            const generator = payload.generator === "deepseek"
+              ? "DeepSeek"
+              : (payload.generator === "local" ? "模板" : (payload.generator || "未知"));
+            const previewText = payload.preview ? ` · ${payload.preview}` : "";
+            appendLog(`(${payload.progress}/${payload.total}) ${payload.title} [${generator}]${previewText}`);
+          } catch (error) {
+            appendLog("解析进度信息时出错。");
+          }
+        };
+
+        source.onerror = function () {
+          appendLog("连接中断，尝试刷新页面或重试。");
+          submitButton.disabled = false;
+          submitButton.textContent = "立即批量生成";
+          if (source) {
+            source.close();
+          }
+        };
+      });
+    });
+  </script>
+{% endblock %}
+
+<section class="panel">
+  <h2>访问热度</h2>
+  <ol>
+    {% for slug, count in stats %}
+      <li><strong>{{ slug }}</strong> · {{ count }} 次</li>
+    {% else %}
+      <li>等待新的访问数据。</li>
+    {% endfor %}
+  </ol>
+</section>
+{% endblock %}

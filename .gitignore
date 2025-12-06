@@ -1,0 +1,16 @@
+# Python and virtual environment
+__pycache__/
+*.pyc
+.venv/
+
+# Environment files
+.env
+*.env
+
+# Runtime data
+/data/
+site_data.json
+
+# IDE/Editor
+.vscode/
+.idea/

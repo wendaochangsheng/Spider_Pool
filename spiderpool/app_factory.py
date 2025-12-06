@@ -1,0 +1,378 @@
+from __future__ import annotations
+
+import os
+import random
+import re
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import List
+
+from flask import (
+    Flask,
+    flash,
+    Response,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    stream_with_context,
+    session,
+    url_for,
+)
+
+from .content import generate_article
+from .links import build_link_set
+from .storage import load_data, save_data, update_data, record_view
+
+ADMIN_USERNAME = os.environ.get("SPIDERPOOL_ADMIN", "admin")
+ADMIN_PASSWORD = os.environ.get("SPIDERPOOL_PASSWORD", "admin")
+
+SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(text: str) -> str:
+    slug = SLUG_PATTERN.sub("-", text.lower()).strip("-")
+    return slug or f"page-{random.randint(1000, 9999)}"
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+TEMPLATE_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+
+
+def create_app() -> Flask:
+    app = Flask(
+        __name__,
+        template_folder=str(TEMPLATE_DIR),
+        static_folder=str(STATIC_DIR),
+    )
+    app.secret_key = os.environ.get("SPIDERPOOL_SECRET", os.urandom(24))
+
+    @app.context_processor
+    def inject_globals():
+        data = load_data()
+        return {
+            "pool_settings": data.get("settings", {}),
+            "domain_list": data.get("domains", []),
+        }
+
+    def _is_authenticated() -> bool:
+        return session.get("admin_logged_in", False)
+
+    def _require_authentication():
+        if not _is_authenticated():
+            return redirect(url_for("admin_login"))
+        return None
+
+    def _register_host(hostname: str) -> None:
+        if not hostname:
+            return
+
+        def _mutate(payload):
+            domains = payload.setdefault("domains", [])
+            if not any(item.get("host") == hostname for item in domains):
+                domains.append({"host": hostname, "label": hostname, "topic": ""})
+
+        update_data(_mutate)
+
+    def _ensure_page(slug: str, *, topic: str | None = None, keywords: List[str] | None = None, host: str | None = None, force: bool = False):
+        data = load_data()
+        page = data.get("pages", {}).get(slug)
+        if not page:
+            page = {"slug": slug}
+
+        if topic:
+            page["topic"] = topic
+        if keywords is not None:
+            if isinstance(keywords, str):
+                keywords_list = [item.strip() for item in keywords.split(",") if item.strip()]
+            else:
+                keywords_list = keywords
+            page["keywords"] = keywords_list
+
+        needs_generation = force or not page.get("body")
+
+        if needs_generation:
+            links = build_link_set(slug, data)
+            settings = data.get("settings", {})
+            keyword_seed = page.get("keywords") or settings.get("default_keywords", [])
+            if isinstance(keyword_seed, str):
+                keyword_seed = [item.strip() for item in keyword_seed.split(",") if item.strip()]
+            topic_seed = page.get("topic") or slug.replace("-", " ")
+            host_ref = host or page.get("host") or "pool.local"
+            article = generate_article(topic_seed, keyword_seed, host_ref, links)
+            page.update(article)
+            page["links"] = links
+            page["host"] = host_ref
+            page["keywords"] = keyword_seed
+            page["topic"] = topic_seed
+            page["updated_at"] = datetime.utcnow().isoformat()
+
+            data.setdefault("pages", {})[slug] = page
+            save_data(data)
+        else:
+            if host and host != page.get("host"):
+                page["host"] = host
+                page["updated_at"] = datetime.utcnow().isoformat()
+                data.setdefault("pages", {})[slug] = page
+                save_data(data)
+
+        return page
+
+    @app.route("/")
+    def landing():
+        host = request.host.split(":")[0]
+        _register_host(host)
+        data = load_data()
+        pages = list(data.get("pages", {}).values())
+        random.shuffle(pages)
+        spotlight = pages[:8]
+        stats = data.get("view_stats", {})
+        return render_template("index.html", pages=spotlight, stats=stats, host=host)
+
+    @app.route("/p/<slug>")
+    def show_page(slug: str):
+        host = request.host.split(":")[0]
+        _register_host(host)
+        page = _ensure_page(slug, host=host)
+        record_view(slug)
+        return render_template("page.html", page=page, host=host)
+
+    @app.route("/robots.txt")
+    def robots():
+        robots_body = "User-agent: *\nDisallow: /\n"
+        response = make_response(robots_body)
+        response.headers["Content-Type"] = "text/plain"
+        return response
+
+    @app.route("/admin/login", methods=["GET", "POST"])
+    def admin_login():
+        if request.method == "POST":
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "").strip()
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                session["admin_logged_in"] = True
+                flash("登录成功", "success")
+                return redirect(url_for("admin_dashboard"))
+            flash("账户或密码错误", "danger")
+        return render_template("admin/login.html")
+
+    @app.route("/admin/logout")
+    def admin_logout():
+        session.clear()
+        return redirect(url_for("admin_login"))
+
+    @app.route("/admin")
+    def admin_dashboard():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        data = load_data()
+        pages = data.get("pages", {})
+        stats_map = data.get("view_stats", {})
+        sorted_stats = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)
+        return render_template(
+            "admin/dashboard.html",
+            pages=pages,
+            stats=sorted_stats,
+            stats_map=stats_map,
+            domains=data.get("domains", []),
+            external_links=data.get("external_links", []),
+            settings=data.get("settings", {}),
+        )
+
+    @app.route("/admin/domains", methods=["POST"])
+    def admin_domains():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        host = request.form.get("host", "").strip().lower()
+        label = request.form.get("label", "").strip() or host
+        topic = request.form.get("topic", "").strip()
+        if host:
+            def _mutate(payload):
+                domains = payload.setdefault("domains", [])
+                existing = next((item for item in domains if item.get("host") == host), None)
+                if existing:
+                    existing.update({"label": label, "topic": topic})
+                else:
+                    domains.append({"host": host, "label": label, "topic": topic})
+
+            update_data(_mutate)
+            flash("域名配置已更新", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/domains/delete", methods=["POST"])
+    def admin_domains_delete():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        host = request.form.get("host")
+        if host:
+            def _mutate(payload):
+                payload["domains"] = [item for item in payload.get("domains", []) if item.get("host") != host]
+
+            update_data(_mutate)
+            flash("域名已移除", "info")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/external-links", methods=["POST"])
+    def admin_external_links():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        action = request.form.get("action", "add")
+        if action == "delete":
+            url = request.form.get("url")
+            if url:
+                def _mutate(payload):
+                    payload["external_links"] = [item for item in payload.get("external_links", []) if item.get("url") != url]
+
+                update_data(_mutate)
+                flash("外链已移除", "info")
+        else:
+            label = request.form.get("label", "").strip()
+            url = request.form.get("url", "").strip()
+            if url:
+                def _mutate(payload):
+                    links = payload.setdefault("external_links", [])
+                    links.append({"label": label or url, "url": url})
+
+                update_data(_mutate)
+                flash("外链已加入池内", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/pages", methods=["POST"])
+    def admin_pages():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        topic = request.form.get("topic", "主题跟进")
+        keywords = request.form.get("keywords", "")
+        slug = request.form.get("slug")
+        slug = slugify(slug or topic)
+        keywords_list = [item.strip() for item in keywords.split(",") if item.strip()]
+        page = _ensure_page(slug, topic=topic, keywords=keywords_list, host=request.host.split(":")[0], force=True)
+        source_label = "DeepSeek" if page.get("generator") == "deepseek" else "本地模板"
+        flash(f"页面已生成（{source_label}）", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/pages/<slug>/regenerate", methods=["POST"])
+    def regenerate_page(slug: str):
+        guard = _require_authentication()
+        if guard:
+            return guard
+        page = _ensure_page(slug, host=request.host.split(":")[0], force=True)
+        source_label = "DeepSeek" if page.get("generator") == "deepseek" else "本地模板"
+        flash(f"页面已重新生成（{source_label}）", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/pages/<slug>/delete", methods=["POST"])
+    def delete_page(slug: str):
+        guard = _require_authentication()
+        if guard:
+            return guard
+
+        def _mutate(payload):
+            payload.get("pages", {}).pop(slug, None)
+            stats = payload.get("view_stats", {})
+            if slug in stats:
+                stats.pop(slug)
+
+        update_data(_mutate)
+        flash("页面已删除", "info")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/settings", methods=["POST"])
+    def update_settings():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        auto_count = request.form.get("auto_page_count", "12")
+        keywords = request.form.get("default_keywords", "")
+        model = request.form.get("deepseek_model", "deepseek-chat")
+        language = request.form.get("language", "zh")
+        keyword_list = [item.strip() for item in keywords.split(",") if item.strip()]
+
+        def _mutate(payload):
+            payload.setdefault("settings", {}).update(
+                {
+                    "auto_page_count": int(auto_count or 12),
+                    "default_keywords": keyword_list,
+                    "deepseek_model": model,
+                    "language": language,
+                }
+            )
+
+        update_data(_mutate)
+        flash("设置已保存", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/auto-build", methods=["POST"])
+    def auto_build():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        count = int(request.form.get("count", 5))
+        host = request.host.split(":")[0]
+        generated = []
+        for _ in range(min(count, 30)):
+            slug = slugify(f"pool-{random.randint(1000, 9999)}")
+            page = _ensure_page(slug, host=host, force=True)
+            generated.append(page.get("title", slug))
+        flash(f"已批量生成 {len(generated)} 个页面", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.route("/admin/auto-build/stream")
+    def auto_build_stream():
+        guard = _require_authentication()
+        if guard:
+            return guard
+
+        try:
+            count = int(request.args.get("count", 5))
+        except (TypeError, ValueError):
+            count = 5
+        count = max(1, min(count, 30))
+        host = request.host.split(":")[0]
+
+        def _generate():
+            yield "retry: 3000\n"
+            for idx in range(count):
+                slug = slugify(f"pool-{random.randint(1000, 9999)}")
+                page = _ensure_page(slug, host=host, force=True)
+                payload = {
+                    "progress": idx + 1,
+                    "total": count,
+                    "title": page.get("title", slug),
+                    "slug": slug,
+                    "updated_at": page.get("updated_at"),
+                    "generator": page.get("generator", "unknown"),
+                    "preview": (page.get("excerpt") or page.get("topic") or "")[:80],
+                }
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'status': 'done'})}\n\n"
+
+        response = Response(stream_with_context(_generate()), mimetype="text/event-stream")
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @app.route("/api/pages")
+    def api_pages():
+        host = request.host.split(":")[0]
+        data = load_data()
+        pages = [
+            {
+                "slug": slug,
+                "title": info.get("title"),
+                "updated_at": info.get("updated_at"),
+                "views": data.get("view_stats", {}).get(slug, 0),
+                "host": info.get("host", host),
+            }
+            for slug, info in data.get("pages", {}).items()
+        ]
+        return jsonify({"pages": pages})
+
+    return app

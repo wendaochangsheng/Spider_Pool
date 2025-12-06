@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}内容矩阵{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrapper">
+      <h1><a href="/">内部内容矩阵</a></h1>
+      <nav>
+        <a href="/">节点概览</a>
+        {% if session.get("admin_logged_in") %}
+          <a href="/admin">控制台</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  <main class="wrapper">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-group">
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <div class="wrapper">
+      <small>© {{ host or request.host }} · Internal Only</small>
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
