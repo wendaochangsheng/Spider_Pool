@@ -185,7 +185,7 @@ def create_app() -> Flask:
         with PAGE_LOCK:
             data = load_data()
             page = data.get("pages", {}).get(slug) or {"slug": slug}
-            links = build_link_set(slug, data)
+            links = build_link_set(slug, data, current_host=_normalize_host(host))
             settings = data.get("settings", {})
             log_to_terminal = bool(settings.get("ai_console_log", True))
 
