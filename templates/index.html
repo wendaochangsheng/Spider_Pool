@@ -1,13 +1,48 @@
 {% extends "base.html" %}
-{% block title %}内容矩阵 · {{ host }}{% endblock %}
+{% block title %}内容集 · {{ host }}{% endblock %}
 {% block content %}
 <section class="hero">
-  <h2>内容矩阵面板</h2>
-  <p>统一调度多个域名的长文节点，自动生成并互链，保持站点内容的持续活跃，便于内部观测和维护。</p>
+  <div>
+    <p class="label">{{ host }}</p>
+    <h2>内容节点速览</h2>
+    <p>生成和收集的长文内容聚合于此，方便快速浏览与分发，不暴露后台入口。</p>
+    <div class="badges">
+      <span>默认关键词：{{ pool_settings.default_keywords | join(' · ') if pool_settings.default_keywords else '未设置' }}</span>
+      <span>批量生成：{{ pool_settings.auto_page_count or 12 }}/次</span>
+    </div>
+  </div>
 </section>
+
+<section class="summary-grid">
+  <div class="stat-card">
+    <p class="muted">页面节点</p>
+    <strong>{{ page_total }}</strong>
+    <small>自动生成长文并互链</small>
+  </div>
+  <div class="stat-card">
+    <p class="muted">域名池</p>
+    <strong>{{ domain_list|length }}</strong>
+    <small>当前注册域名数量</small>
+  </div>
+  <div class="stat-card">
+    <p class="muted">访问累计</p>
+    <strong>{{ stats.values()|sum }}</strong>
+    <small>即时统计，辅助调整投放</small>
+  </div>
+  <div class="stat-card">
+    <p class="muted">外链池</p>
+    <strong>{{ external_links|length }}</strong>
+    <small>动态曝光的外部链接</small>
+  </div>
+</section>
+
 <section class="grid">
   {% for page in pages %}
     <article class="card">
+      <div class="card-header">
+        <p class="label subtle">{{ page.host }}</p>
+        <span class="chip">{{ page.generator or '模板' }}</span>
+      </div>
       <h3><a href="/p/{{ page.slug }}">{{ page.title or page.topic or page.slug }}</a></h3>
       <p>{{ page.excerpt or '动态内容节点' }}</p>
       <div class="meta">更新：{{ page.updated_at or '未知' }}</div>
@@ -16,14 +51,29 @@
     <p>暂无内容，可在后台快速生成。</p>
   {% endfor %}
 </section>
+
 <section class="panel">
   <h3>访问速览</h3>
-  <ul>
+  <ul class="list two-col">
     {% for slug, count in stats.items() %}
       <li><strong>{{ slug }}</strong> · {{ count }} 次访问</li>
     {% else %}
       <li>暂无统计，等待后续访问。</li>
     {% endfor %}
   </ul>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>动态外链池</h3>
+    <p class="muted">后台录入的外链将实时随机曝光，无需重新生成页面。</p>
+  </div>
+  <div class="link-grid">
+    {% for item in external_links %}
+      <a class="link-chip" href="{{ item.url }}" target="_blank" rel="nofollow noopener">{{ item.label }}</a>
+    {% else %}
+      <p class="muted">暂无外链，可在后台添加曝光链接。</p>
+    {% endfor %}
+  </div>
 </section>
 {% endblock %}

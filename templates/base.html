@@ -3,18 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{% block title %}内容矩阵{% endblock %}</title>
+  <title>{% block title %}内容集{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
   <header class="site-header">
     <div class="wrapper">
-      <h1><a href="/">内部内容矩阵</a></h1>
+      <h1><a href="/">内容集</a></h1>
       <nav>
         <a href="/">节点概览</a>
-        {% if session.get("admin_logged_in") %}
-          <a href="/admin">控制台</a>
-        {% endif %}
       </nav>
     </div>
   </header>
