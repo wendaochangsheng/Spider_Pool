@@ -135,6 +135,14 @@ def create_app() -> Flask:
         pages = list(data.get("pages", {}).values())
         random.shuffle(pages)
         spotlight = pages[:8]
+        def _sort_by_updated(page):
+            try:
+                return datetime.fromisoformat(page.get("updated_at"))
+            except Exception:
+                return datetime.min
+        latest_pages = sorted(pages, key=_sort_by_updated, reverse=True)[:6]
+        stats_map = data.get("view_stats", {})
+        hottest = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)[:6]
         stats = data.get("view_stats", {})
         shuffled_links = data.get("external_links", [])[:]
         random.shuffle(shuffled_links)
@@ -145,6 +153,8 @@ def create_app() -> Flask:
             stats=stats,
             host=host,
             external_links=shuffled_links[:8],
+            latest_pages=latest_pages,
+            hottest=hottest,
         )
 
     @app.route("/p/<slug>")

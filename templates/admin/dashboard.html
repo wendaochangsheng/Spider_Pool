@@ -32,7 +32,7 @@
   </section>
 
   <section class="panel">
-    <h2>域名池</h2>
+    <h2>域名配置</h2>
     <form method="post" action="/admin/domains">
       <label>域名
         <input type="text" name="host" placeholder="example.com" required>
@@ -122,7 +122,13 @@
 </div>
 
 <section class="panel">
-  <h2>页面列表</h2>
+  <div class="panel-header">
+    <div>
+      <h2>页面列表</h2>
+      <p class="muted">快速检索、再生成或删除单页，便于日常维护。</p>
+    </div>
+    <input type="search" id="page-filter" placeholder="输入关键词过滤" aria-label="过滤页面">
+  </div>
   <div class="table">
     <div class="row head">
       <span>Slug</span>
@@ -131,7 +137,7 @@
       <span>操作</span>
     </div>
     {% for slug, page in pages.items() %}
-      <div class="row">
+      <div class="row" data-filter-text="{{ slug }} {{ page.title }} {{ page.topic }}">
         <span>{{ slug }}</span>
         <span>{{ page.title }}</span>
         <span>{{ stats_map.get(slug, 0) }}</span>
@@ -212,6 +218,18 @@
           }
         };
       });
+
+      const filterInput = document.getElementById("page-filter");
+      const rows = document.querySelectorAll(".table .row:not(.head)");
+      if (filterInput) {
+        filterInput.addEventListener("input", function () {
+          const term = (filterInput.value || "").toLowerCase();
+          rows.forEach((row) => {
+            const text = row.dataset.filterText || "";
+            row.style.display = text.toLowerCase().includes(term) ? "grid" : "none";
+          });
+        });
+      }
     });
   </script>
 {% endblock %}
