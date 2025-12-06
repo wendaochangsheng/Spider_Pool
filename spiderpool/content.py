@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import textwrap
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
@@ -42,6 +43,24 @@ def _call_deepseek(prompt: str, model: str) -> Tuple[Dict[str, Any] | None, str 
         return response.json(), None
     except Exception as exc:  # pragma: no cover - requests errors
         return None, str(exc)
+
+
+def _normalize_json_text(content: str) -> str | None:
+    cleaned = content.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
+        cleaned = cleaned.split("```", 1)[0].strip()
+
+    if "{" in cleaned and "}" in cleaned:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        cleaned = cleaned[start : end + 1]
+
+    if not cleaned.startswith("{"):
+        return None
+
+    return cleaned
 
 
 def _structured_payload(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> str:
@@ -151,7 +170,11 @@ def generate_article(topic: str, keywords: List[str], host: str, links: List[Dic
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             print(f"[AI] 原始响应片段: {content[:320]}...", flush=True)
             try:
-                structured = json.loads(content)
+                normalized = _normalize_json_text(content)
+                if not normalized:
+                    raise json.JSONDecodeError("未找到可解析的 JSON 结构", content, 0)
+                print(f"[AI] 解析内容片段: {normalized[:280]}...", flush=True)
+                structured = json.loads(normalized)
             except json.JSONDecodeError as exc:
                 record_ai_event(
                     "DeepSeek 返回无法解析的内容",
