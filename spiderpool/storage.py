@@ -17,7 +17,7 @@ DEFAULT_DATA = {
     "ai_logs": [],
     "bot_hits": [],
     "settings": {
-        "auto_page_count": 12,
+        "auto_page_count": 8,
         "default_keywords": [],
         "deepseek_model": "deepseek-chat",
         "language": "zh",

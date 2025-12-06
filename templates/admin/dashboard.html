@@ -40,11 +40,11 @@
   <div class="panel">
     <div class="panel-header">
       <h3>访问热度</h3>
-      <p class="muted">实时统计的高频页面。</p>
+      <p class="muted">基于访问统计的表现亮点。</p>
     </div>
     <ol class="compact">
-      {% for slug, count in stats %}
-        <li><a href="/p/{{ slug }}" target="_blank">{{ slug }}</a> · {{ count }} 次</li>
+      {% for item in top_performers %}
+        <li><a href="/p/{{ item.slug }}" target="_blank">{{ item.title }}</a> · {{ item.views }} 次</li>
       {% else %}
         <li>等待新的访问数据。</li>
       {% endfor %}
@@ -85,6 +85,24 @@
         <p class="muted">暂无域名数据，等待首次访问或生成。</p>
       {% endfor %}
     </div>
+  </div>
+  <div class="panel">
+    <div class="panel-header">
+      <h3>最近稿件</h3>
+      <p class="muted">按更新时间排序，便于确认内容健康度。</p>
+    </div>
+    <ul class="list spaced">
+      {% for page in recent_pages %}
+        <li>
+          <div>
+            <strong><a href="/p/{{ page.slug }}" target="_blank">{{ page.title or page.topic or page.slug }}</a></strong>
+            <div class="muted small">{{ page.updated_at or page.created_at or '未知' }} · 关键词：{{ page.keywords | join(' / ') }}</div>
+          </div>
+        </li>
+      {% else %}
+        <li class="muted">暂无内容更新。</li>
+      {% endfor %}
+    </ul>
   </div>
 </section>
 

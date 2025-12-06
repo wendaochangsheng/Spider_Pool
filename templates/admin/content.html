@@ -6,9 +6,9 @@
 <div class="grid two-up">
   <section class="panel">
     <h2>批量生成</h2>
-    <form method="post" action="/admin/auto-build" id="auto-build-form" data-default-count="{{ settings.auto_page_count or 12 }}">
+    <form method="post" action="/admin/auto-build" id="auto-build-form" data-default-count="{{ settings.auto_page_count or 8 }}">
       <label>数量
-        <input type="number" min="1" max="30" name="count" value="{{ settings.auto_page_count or 12 }}">
+        <input type="number" min="1" max="30" name="count" value="{{ settings.auto_page_count or 8 }}">
       </label>
       <label class="checkbox">
         <input type="checkbox" name="random" id="auto-random" value="1">

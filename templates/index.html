@@ -1,94 +1,102 @@
 {% extends "base.html" %}
 {% block title %}{{ host }} · 轻阅读{% endblock %}
 {% block content %}
-<section class="hero">
-  <div>
-    <p class="label">{{ host }}</p>
-    <h2>今日新鲜看点</h2>
-    <p>这里展示了不同主题的长文与日常资讯，保持轻量、自然的阅读体验。</p>
-    <div class="badges">
+<section class="hero hero-grid">
+  <div class="hero-copy">
+    <p class="eyebrow">{{ host }}</p>
+    <h1>今日灵感纪要</h1>
+    <p class="lead">精选长文、常规资讯与主题摘录，保持轻量、自然的阅读节奏。</p>
+    <div class="pill-group">
       <span>默认关键词：{{ pool_settings.default_keywords | join(' · ') if pool_settings.default_keywords else '未设置' }}</span>
-      <span>批量生成：{{ pool_settings.auto_page_count or 12 }}/次</span>
+      <span>批量生成：{{ pool_settings.auto_page_count or 8 }}/次</span>
     </div>
+  </div>
+  <div class="hero-card">
+    <div class="panel-header">
+      <div>
+        <p class="label subtle">活跃主题</p>
+        <h3>阅读榜单</h3>
+      </div>
+      <span class="muted small">按访问量实时排序</span>
+    </div>
+    <ul class="mini-list">
+      {% for item in leaderboard[:5] %}
+        <li>
+          <div>
+            <a href="/p/{{ item.slug }}">{{ item.label }}</a>
+            <p class="muted small">{{ item.count }} 次阅读</p>
+          </div>
+        </li>
+      {% else %}
+        <li class="muted">暂无统计，等待新的阅读记录。</li>
+      {% endfor %}
+    </ul>
   </div>
 </section>
 
-<section class="summary-grid">
+<section class="stat-grid">
   <div class="stat-card">
     <p class="muted">页面节点</p>
     <strong>{{ page_total }}</strong>
-    <small>自动生成长文并互链</small>
+    <small>长文与日常稿件</small>
   </div>
   <div class="stat-card">
     <p class="muted">域名池</p>
     <strong>{{ domain_list|length }}</strong>
-    <small>当前注册域名数量</small>
+    <small>泛域名访问支持</small>
   </div>
   <div class="stat-card">
     <p class="muted">浏览累计</p>
     <strong>{{ stats.values()|sum }}</strong>
-    <small>纯静态统计，记录访客的阅读足迹</small>
+    <small>访客足迹纯记录</small>
   </div>
   <div class="stat-card">
     <p class="muted">精选链接</p>
     <strong>{{ external_links|length }}</strong>
-    <small>后台维护的外部参考</small>
+    <small>跳转至相关主题</small>
   </div>
 </section>
 
-<section class="grid">
-  {% for page in pages %}
-    <article class="card">
-      <div class="card-header">
-        <p class="label subtle">{{ page.host }}</p>
-        <span class="chip">{{ page.topic or '主题文章' }}</span>
-      </div>
-      <h3><a href="/p/{{ page.slug }}">{{ page.title or page.topic or page.slug }}</a></h3>
-      <p>{{ page.excerpt or '轻量阅读片段' }}</p>
-      <div class="meta">更新：{{ page.updated_at or '未知' }}</div>
-    </article>
-  {% else %}
-    <p>暂无内容，可在后台快速生成。</p>
-  {% endfor %}
-</section>
-
-<section class="panel">
-    <h3>阅读榜单</h3>
-    <div class="list two-col">
-      {% for item in leaderboard %}
-        <div class="stat-line"><strong><a href="/p/{{ item.slug }}">{{ item.label }}</a></strong> · {{ item.count }} 次访问</div>
-      {% else %}
-        <p>暂无统计，等待后续访问。</p>
-      {% endfor %}
+<section class="section">
+  <div class="section-header">
+    <div>
+      <p class="label subtle">最新上架</p>
+      <h2>精选稿件</h2>
+    </div>
+    <p class="muted">随机挑选不同域名的内容，保持入口多样化。</p>
   </div>
-</section>
-
-<section class="panel">
-  <div class="panel-header">
-    <h3>友好链接</h3>
-    <p class="muted">后台录入的参考链接随机呈现，方便跳转到相关主题。</p>
-  </div>
-  <div class="link-grid">
-    {% for item in external_links %}
-      <a class="link-chip" href="{{ item.url }}" target="_blank" rel="nofollow noopener">{{ item.label }}</a>
+  <div class="grid">
+    {% for page in pages %}
+      <article class="card">
+        <div class="card-header">
+          <p class="label subtle">{{ page.host }}</p>
+          <span class="chip">{{ page.topic or '主题文章' }}</span>
+        </div>
+        <h3><a href="/p/{{ page.slug }}">{{ page.title or page.topic or page.slug }}</a></h3>
+        <p class="muted">{{ page.excerpt or '轻量阅读片段' }}</p>
+        <div class="meta">更新：{{ page.updated_at or '未知' }}</div>
+      </article>
     {% else %}
-      <p class="muted">暂无外链，可在后台添加曝光链接。</p>
+      <p>暂无内容，可在后台快速生成。</p>
     {% endfor %}
   </div>
 </section>
 
-<section class="grid two-up">
+<section class="section split">
   <div class="panel">
     <div class="panel-header">
-      <h3>最新更新</h3>
-      <p class="muted">按更新时间排序的最近稿件，便于快速确认内容健康度。</p>
+      <div>
+        <p class="label subtle">更新节奏</p>
+        <h3>最近稿件</h3>
+      </div>
+      <span class="muted small">按更新时间倒序</span>
     </div>
-    <ul class="list">
+    <ul class="list spaced">
       {% for page in latest_pages %}
         <li>
           <div>
             <strong><a href="/p/{{ page.slug }}">{{ page.title or page.topic or page.slug }}</a></strong>
-            <div class="muted small">{{ page.updated_at or '刚创建' }} · 关键词：{{ page.keywords | join(' / ') }}</div>
+            <div class="muted small">{{ page.updated_at or '刚创建' }} · {{ page.keywords | join(' / ') }}</div>
           </div>
         </li>
       {% else %}
@@ -98,16 +106,43 @@
   </div>
   <div class="panel">
     <div class="panel-header">
-      <h3>热度榜</h3>
-      <p class="muted">基于访问统计，识别表现较好的主题，方便二次分发。</p>
+      <div>
+        <p class="label subtle">表现亮点</p>
+        <h3>热力焦点</h3>
+      </div>
+      <span class="muted small">便于二次分发</span>
     </div>
-    <ol>
-      {% for slug, count in hottest %}
-        <li><a href="/p/{{ slug }}">{{ slug }}</a> · {{ count }} 次访问</li>
+    <ul class="mini-list">
+      {% for item in top_performers %}
+        <li>
+          <div>
+            <a href="/p/{{ item.slug }}">{{ item.title }}</a>
+            <p class="muted small">{{ item.views }} 次浏览 · {{ item.updated_at or '近期更新' }}</p>
+          </div>
+        </li>
       {% else %}
-        <li>暂无数据，等待搜索引导或投放。</li>
+        <li class="muted">暂无数据，等待搜索引导或投放。</li>
       {% endfor %}
-    </ol>
+    </ul>
+  </div>
+</section>
+
+<section class="section">
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <p class="label subtle">灵感跳转</p>
+        <h3>参考链接</h3>
+      </div>
+      <p class="muted small">精选引用链接，方便进入相关主题。</p>
+    </div>
+    <div class="link-grid">
+      {% for item in external_links %}
+        <a class="link-chip" href="{{ item.url }}" target="_blank" rel="nofollow noopener">{{ item.label }}</a>
+      {% else %}
+        <p class="muted">暂无外链，可在后台添加曝光链接。</p>
+      {% endfor %}
+    </div>
   </div>
 </section>
 {% endblock %}

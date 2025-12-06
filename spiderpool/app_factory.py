@@ -242,27 +242,36 @@ def create_app() -> Flask:
                 return datetime.min
         latest_pages = sorted(pages, key=_sort_by_updated, reverse=True)[:6]
         stats_map = data.get("view_stats", {})
-        hottest = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)[:6]
-        stats = data.get("view_stats", {})
         slug_lookup = {page.get("slug"): page for page in pages}
         leaderboard = []
-        for slug, count in stats.items():
+        for slug, count in stats_map.items():
             page = slug_lookup.get(slug, {})
             label = page.get("topic") or page.get("title") or slug
             leaderboard.append({"slug": slug, "count": count, "label": label})
         leaderboard = sorted(leaderboard, key=lambda item: item["count"], reverse=True)
+        top_performers = []
+        for item in leaderboard[:6]:
+            page = slug_lookup.get(item["slug"], {})
+            top_performers.append(
+                {
+                    "slug": item["slug"],
+                    "views": item["count"],
+                    "title": page.get("title") or page.get("topic") or item["slug"],
+                    "updated_at": page.get("updated_at") or page.get("created_at"),
+                }
+            )
         shuffled_links = data.get("external_links", [])[:]
         random.shuffle(shuffled_links)
         return render_template(
             "index.html",
             pages=spotlight,
             page_total=len(pages),
-            stats=stats,
+            stats=stats_map,
             leaderboard=leaderboard,
             host=host,
             external_links=shuffled_links[:8],
             latest_pages=latest_pages,
-            hottest=hottest,
+            top_performers=top_performers,
         )
 
     @app.route("/p/<slug>")
@@ -324,6 +333,25 @@ def create_app() -> Flask:
         if guard:
             return guard
         data, pages, stats_map, sorted_stats, bot_hits, domain_stats = _admin_payload()
+        top_performers = []
+        for slug, views in sorted_stats[:8]:
+            page = pages.get(slug, {})
+            top_performers.append(
+                {
+                    "slug": slug,
+                    "views": views,
+                    "title": page.get("title") or page.get("topic") or slug,
+                    "updated_at": page.get("updated_at") or page.get("created_at"),
+                }
+            )
+
+        def _sort_recent(item):
+            try:
+                return datetime.fromisoformat(item.get("updated_at") or item.get("created_at") or "")
+            except Exception:
+                return datetime.min
+
+        recent_pages = sorted(pages.values(), key=_sort_recent, reverse=True)[:8]
         return render_template(
             "admin/dashboard.html",
             pages=pages,
@@ -333,6 +361,8 @@ def create_app() -> Flask:
             domain_stats=domain_stats,
             settings=data.get("settings", {}),
             ai_logs=data.get("ai_logs", []),
+            top_performers=top_performers,
+            recent_pages=recent_pages,
             active="overview",
         )
 
@@ -511,7 +541,7 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        auto_count = request.form.get("auto_page_count", "12")
+        auto_count = request.form.get("auto_page_count", "8")
         keywords = request.form.get("default_keywords", "")
         model = request.form.get("deepseek_model", "deepseek-chat")
         language = request.form.get("language", "zh")
@@ -525,7 +555,7 @@ def create_app() -> Flask:
             settings = payload.setdefault("settings", {})
             settings.update(
                 {
-                    "auto_page_count": int(auto_count or 12),
+                    "auto_page_count": int(auto_count or 8),
                     "default_keywords": keyword_list,
                     "deepseek_model": model,
                     "language": language,
@@ -547,11 +577,12 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        count = int(request.form.get("count", 5))
-        random_mode = _is_enabled(request.form.get("random"))
-        host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
+        default_count = int(settings.get("auto_page_count", 8) or 8)
+        count = int(request.form.get("count", default_count))
+        random_mode = _is_enabled(request.form.get("random"))
+        host = request.host.split(":")[0]
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         generated = []
         jobs = []
@@ -591,14 +622,15 @@ def create_app() -> Flask:
         if guard:
             return guard
 
-        try:
-            count = int(request.args.get("count", 5))
-        except (TypeError, ValueError):
-            count = 5
-        count = max(1, min(count, 30))
-        host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
+        default_count = int(settings.get("auto_page_count", 8) or 8)
+        try:
+            count = int(request.args.get("count", default_count))
+        except (TypeError, ValueError):
+            count = default_count
+        count = max(1, min(count, 30))
+        host = request.host.split(":")[0]
         random_mode = _is_enabled(request.args.get("random"))
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         article_min = max(200, int(settings.get("article_min_words", 800) or 800))
