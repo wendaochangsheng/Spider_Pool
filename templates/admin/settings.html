@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}配置中心{% endblock %}
+{% block content %}
+{% include "admin/nav.html" with context %}
+
+<div class="grid two-up">
+  <section class="panel">
+    <h2>域名配置</h2>
+    <form method="post" action="/admin/domains">
+      <label>域名
+        <input type="text" name="host" placeholder="example.com" required>
+      </label>
+      <label>别名
+        <input type="text" name="label" placeholder="展示名称">
+      </label>
+      <label>主题特征
+        <input type="text" name="topic" placeholder="应用场景">
+      </label>
+      <button type="submit">保存域名</button>
+    </form>
+    <ul class="list">
+      {% for domain in domains %}
+        <li>
+          <div>
+            <strong>{{ domain.label }}</strong> · {{ domain.host }}
+            <div class="muted small">{{ domain.topic or '-' }}</div>
+          </div>
+          <form method="post" action="/admin/domains/delete">
+            <input type="hidden" name="host" value="{{ domain.host }}">
+            <button type="submit" class="link">移除</button>
+          </form>
+        </li>
+      {% else %}
+        <li>暂无域名，可添加任意泛解析域。</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>外链池</h2>
+    <p class="muted">新增后立即参与页面动态互链，无需重新生成。</p>
+    <form method="post" action="/admin/external-links">
+      <label>名称
+        <input type="text" name="label" placeholder="品牌或项目名">
+      </label>
+      <label>URL
+        <input type="url" name="url" placeholder="https://" required>
+      </label>
+      <button type="submit">加入曝光列表</button>
+    </form>
+    <ul class="list">
+      {% for item in external_links %}
+        <li>
+          <a href="{{ item.url }}" target="_blank" rel="nofollow noopener">{{ item.label }}</a>
+          <form method="post" action="/admin/external-links">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="url" value="{{ item.url }}">
+            <button type="submit" class="link">删除</button>
+          </form>
+        </li>
+      {% else %}
+        <li>暂无外链，将自动互链内部页面。</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>全局设置</h2>
+  <form method="post" action="/admin/settings">
+    <label>默认关键词（逗号分隔）
+      <input type="text" name="default_keywords" value="{{ settings.default_keywords | join(', ') if settings.default_keywords else '' }}">
+    </label>
+    <label>DeepSeek 模型
+      <input type="text" name="deepseek_model" value="{{ settings.deepseek_model or 'deepseek-chat' }}">
+    </label>
+    <input type="hidden" name="language" value="{{ settings.language or 'zh' }}">
+    <label>批量生成数量
+      <input type="number" name="auto_page_count" min="1" max="50" value="{{ settings.auto_page_count or 12 }}">
+    </label>
+    <div class="inline-inputs">
+      <label>AI 线程并发
+        <input type="number" name="ai_thread_count" min="1" max="32" value="{{ settings.ai_thread_count or 8 }}">
+      </label>
+      <label>文章最小字数
+        <input type="number" name="article_min_words" min="200" value="{{ settings.article_min_words or 800 }}">
+      </label>
+      <label>文章最大字数
+        <input type="number" name="article_max_words" min="400" value="{{ settings.article_max_words or 1500 }}">
+      </label>
+    </div>
+    <button type="submit">保存配置</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <h3>爬虫识别记录</h3>
+      <p class="muted">仅后台展示，便于识别来源。</p>
+    </div>
+  </div>
+  <div class="table small">
+    <div class="row head"><span>来源</span><span>UA</span><span>次数</span></div>
+    {% for bot in bot_hits %}
+      <div class="row">
+        <span>{{ bot.family }}</span>
+        <span class="muted small">{{ bot.ua }}</span>
+        <span>{{ bot.hits }}</span>
+      </div>
+    {% else %}
+      <p class="muted">暂无爬虫访问记录。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

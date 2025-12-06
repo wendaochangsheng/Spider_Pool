@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable
+from typing import Any, Callable, Dict, Iterable, List, Tuple
 
 DB_PATH = Path(os.environ.get("SPIDERPOOL_DB_PATH", "data/site_data.db"))
 
@@ -14,6 +15,7 @@ DEFAULT_DATA = {
     "pages": {},
     "view_stats": {},
     "ai_logs": [],
+    "bot_hits": [],
     "settings": {
         "auto_page_count": 12,
         "default_keywords": [],
@@ -77,6 +79,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             meta TEXT,
             timestamp TEXT
         );
+        CREATE TABLE IF NOT EXISTS bot_hits (
+            ua TEXT PRIMARY KEY,
+            family TEXT,
+            hits INTEGER DEFAULT 1,
+            last_seen TEXT
+        );
         """
     )
     _ensure_default_settings(conn)
@@ -119,6 +127,7 @@ def load_data() -> Dict[str, Any]:
         "pages": {},
         "view_stats": {},
         "ai_logs": [],
+        "bot_hits": [],
         "settings": _fetch_settings(conn),
     }
 
@@ -158,6 +167,16 @@ def load_data() -> Dict[str, Any]:
                 "message": row["message"],
                 "meta": meta,
                 "timestamp": row["timestamp"],
+            }
+        )
+
+    for row in _fetch_table(conn, "SELECT ua, family, hits, last_seen FROM bot_hits ORDER BY hits DESC, last_seen DESC LIMIT 50"):
+        data["bot_hits"].append(
+            {
+                "ua": row["ua"],
+                "family": row["family"],
+                "hits": row["hits"],
+                "last_seen": row["last_seen"],
             }
         )
 
@@ -219,10 +238,24 @@ def save_data(payload: Dict[str, Any]) -> None:
         ],
     )
 
+    existing_views = {row["slug"]: row["views"] for row in _fetch_table(conn, "SELECT slug, views FROM view_stats")}
+    incoming_views = payload.get("view_stats", {})
+    merged_views: Dict[str, int] = {}
+
+    for slug, views in incoming_views.items():
+        merged_views[slug] = max(int(views or 0), int(existing_views.get(slug, 0)))
+
+    for slug, views in existing_views.items():
+        if slug in merged_views:
+            continue
+        if slug not in payload.get("pages", {}):
+            continue
+        merged_views[slug] = int(views)
+
     cursor.execute("DELETE FROM view_stats")
     cursor.executemany(
         "INSERT OR REPLACE INTO view_stats(slug, views) VALUES (?, ?)",
-        [(slug, views) for slug, views in payload.get("view_stats", {}).items()],
+        [(slug, views) for slug, views in merged_views.items()],
     )
 
     cursor.execute("DELETE FROM ai_logs")
@@ -255,12 +288,13 @@ def get_page(slug: str) -> Dict[str, Any] | None:
     return data.get("pages", {}).get(slug)
 
 
-def record_view(slug: str) -> None:
+def record_view(slug: str, *, user_agent: str | None = None) -> None:
     conn = _get_connection()
     conn.execute(
         "INSERT INTO view_stats(slug, views) VALUES(?, 1) ON CONFLICT(slug) DO UPDATE SET views = views + 1",
         (slug,),
     )
+    record_bot_hit(user_agent)
     conn.commit()
     conn.close()
 
@@ -270,6 +304,53 @@ def record_ai_event(message: str, *, level: str = "info", meta: Dict[str, Any] |
     conn.execute(
         "INSERT INTO ai_logs(level, message, meta, timestamp) VALUES (?, ?, ?, datetime('now'))",
         (level, message, json.dumps(meta or {}, ensure_ascii=False),),
+    )
+    conn.commit()
+    conn.close()
+
+
+BOT_PATTERNS: List[Tuple[str, str]] = [
+    ("googlebot", "Google"),
+    ("bingbot", "Bing"),
+    ("baiduspider", "Baidu"),
+    ("bytespider", "ByteDance"),
+    ("yisouspider", "360"),
+    ("sogou spider", "Sogou"),
+    ("duckduckbot", "DuckDuckGo"),
+    ("slurp", "Yahoo"),
+    ("seznambot", "Seznam"),
+    ("mj12bot", "Majestic"),
+]
+
+
+def detect_bot(user_agent: str | None) -> str | None:
+    if not user_agent:
+        return None
+    lowered = user_agent.lower()
+    for pattern, family in BOT_PATTERNS:
+        if re.search(pattern, lowered):
+            return family
+    if "bot" in lowered or "spider" in lowered:
+        return "Unknown"
+    return None
+
+
+def record_bot_hit(user_agent: str | None) -> None:
+    family = detect_bot(user_agent)
+    if not family:
+        return
+    ua_value = user_agent or "Unknown"
+    conn = _get_connection()
+    conn.execute(
+        """
+        INSERT INTO bot_hits(ua, family, hits, last_seen)
+        VALUES(?, ?, 1, datetime('now'))
+        ON CONFLICT(ua) DO UPDATE SET
+            hits = bot_hits.hits + 1,
+            family = excluded.family,
+            last_seen = datetime('now')
+        """,
+        (ua_value[:500], family),
     )
     conn.commit()
     conn.close()

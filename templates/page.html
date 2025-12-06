@@ -8,8 +8,24 @@
     <p class="excerpt">{{ page.excerpt }}</p>
     <div class="meta">最近更新：{{ page.updated_at }} · 关键词：{{ page.keywords | join(', ') }}</div>
   </header>
-  <section class="body" aria-label="page body">
-    {{ page.body | safe }}
+  <section class="content-box">
+    <section class="body" aria-label="page body">
+      {{ page.body | safe }}
+    </section>
+    <div class="meta-grid">
+      <div class="stat-card">
+        <p class="muted">主题</p>
+        <strong>{{ page.topic or page.title }}</strong>
+      </div>
+      <div class="stat-card">
+        <p class="muted">关键词</p>
+        <small>{{ page.keywords | join(' · ') }}</small>
+      </div>
+      <div class="stat-card">
+        <p class="muted">生成方式</p>
+        <small>{{ page.generator or '未知' }} · {{ page.model or '模板' }}</small>
+      </div>
+    </div>
   </section>
   <section class="related-live">
     <h3>动态互链 / 外链</h3>

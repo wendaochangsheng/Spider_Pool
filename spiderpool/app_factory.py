@@ -7,6 +7,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import List
 
 from flask import (
@@ -31,6 +32,7 @@ ADMIN_USERNAME = os.environ.get("SPIDERPOOL_ADMIN", "admin")
 ADMIN_PASSWORD = os.environ.get("SPIDERPOOL_PASSWORD", "admin")
 
 SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
+PAGE_LOCK = Lock()
 
 
 def slugify(text: str) -> str:
@@ -67,6 +69,14 @@ def create_app() -> Flask:
             return redirect(url_for("admin_login"))
         return None
 
+    def _admin_payload():
+        data = load_data()
+        pages = data.get("pages", {})
+        stats_map = data.get("view_stats", {})
+        sorted_stats = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)
+        bot_hits = data.get("bot_hits", [])
+        return data, pages, stats_map, sorted_stats, bot_hits
+
     def _register_host(hostname: str) -> None:
         if not hostname:
             return
@@ -89,27 +99,22 @@ def create_app() -> Flask:
         references: List[str] | None = None,
         force: bool = False,
     ):
-        data = load_data()
-        page = data.get("pages", {}).get(slug)
-        if not page:
-            page = {"slug": slug}
+        with PAGE_LOCK:
+            data = load_data()
+            page = data.get("pages", {}).get(slug) or {"slug": slug}
+            links = build_link_set(slug, data)
+            settings = data.get("settings", {})
 
-        links = build_link_set(slug, data)
+            if topic:
+                page["topic"] = topic
+            if keywords is not None:
+                if isinstance(keywords, str):
+                    keywords_list = [item.strip() for item in keywords.split(",") if item.strip()]
+                else:
+                    keywords_list = keywords
+                page["keywords"] = keywords_list
 
-        settings = data.get("settings", {})
-
-        if topic:
-            page["topic"] = topic
-        if keywords is not None:
-            if isinstance(keywords, str):
-                keywords_list = [item.strip() for item in keywords.split(",") if item.strip()]
-            else:
-                keywords_list = keywords
-            page["keywords"] = keywords_list
-
-        needs_generation = force or not page.get("body")
-
-        if needs_generation:
+            needs_generation = force or not page.get("body")
             keyword_seed = page.get("keywords") or settings.get("default_keywords", [])
             if isinstance(keyword_seed, str):
                 keyword_seed = [item.strip() for item in keyword_seed.split(",") if item.strip()]
@@ -118,15 +123,32 @@ def create_app() -> Flask:
             article_min = max(int(min_words or settings.get("article_min_words", 800) or 800), 200)
             article_max = max(int(max_words or settings.get("article_max_words", article_min + 400) or article_min + 400), article_min + 200)
             reference_urls = references or []
-            article = generate_article(
-                topic_seed,
-                keyword_seed,
-                host_ref,
-                links,
-                min_words=article_min,
-                max_words=article_max,
-                reference_urls=reference_urls,
-            )
+
+            if not needs_generation:
+                if host and host != page.get("host"):
+                    page["host"] = host
+                    page["updated_at"] = datetime.utcnow().isoformat()
+                    data.setdefault("pages", {})[slug] = page
+                    save_data(data)
+                if page.get("links") != links:
+                    page["links"] = links
+                    data.setdefault("pages", {})[slug] = page
+                    save_data(data)
+                return page
+
+        article = generate_article(
+            topic_seed,
+            keyword_seed,
+            host_ref,
+            links,
+            min_words=article_min,
+            max_words=article_max,
+            reference_urls=reference_urls,
+        )
+
+        with PAGE_LOCK:
+            data = load_data()
+            page = data.get("pages", {}).get(slug) or {"slug": slug}
             page.update(article)
             page["links"] = links
             page["host"] = host_ref
@@ -136,19 +158,7 @@ def create_app() -> Flask:
 
             data.setdefault("pages", {})[slug] = page
             save_data(data)
-        else:
-            if host and host != page.get("host"):
-                page["host"] = host
-                page["updated_at"] = datetime.utcnow().isoformat()
-                data.setdefault("pages", {})[slug] = page
-                save_data(data)
-
-        if page.get("links") != links:
-            page["links"] = links
-            data.setdefault("pages", {})[slug] = page
-            save_data(data)
-
-        return page
+            return page
 
     @app.route("/")
     def landing():
@@ -185,7 +195,7 @@ def create_app() -> Flask:
         host = request.host.split(":")[0]
         _register_host(host)
         page = _ensure_page(slug, host=host)
-        record_view(slug)
+        record_view(slug, user_agent=request.headers.get("User-Agent"))
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
     @app.errorhandler(404)
@@ -199,7 +209,7 @@ def create_app() -> Flask:
             return make_response("未找到内容", 404)
         candidate = pages[0]
         page = _ensure_page(candidate.get("slug"), host=host)
-        record_view(page.get("slug"))
+        record_view(page.get("slug"), user_agent=request.headers.get("User-Agent"))
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
     @app.route("/robots.txt")
@@ -231,19 +241,46 @@ def create_app() -> Flask:
         guard = _require_authentication()
         if guard:
             return guard
-        data = load_data()
-        pages = data.get("pages", {})
-        stats_map = data.get("view_stats", {})
-        sorted_stats = sorted(stats_map.items(), key=lambda item: item[1], reverse=True)
+        data, pages, stats_map, sorted_stats, bot_hits = _admin_payload()
         return render_template(
             "admin/dashboard.html",
             pages=pages,
             stats=sorted_stats,
             stats_map=stats_map,
+            bot_hits=bot_hits,
+            settings=data.get("settings", {}),
+            ai_logs=data.get("ai_logs", []),
+            active="overview",
+        )
+
+    @app.route("/admin/content")
+    def admin_content():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        data, pages, stats_map, sorted_stats, _ = _admin_payload()
+        return render_template(
+            "admin/content.html",
+            pages=pages,
+            stats=sorted_stats,
+            stats_map=stats_map,
+            settings=data.get("settings", {}),
+            active="content",
+        )
+
+    @app.route("/admin/settings")
+    def admin_settings_page():
+        guard = _require_authentication()
+        if guard:
+            return guard
+        data, _, _, _, bot_hits = _admin_payload()
+        return render_template(
+            "admin/settings.html",
             domains=data.get("domains", []),
             external_links=data.get("external_links", []),
             settings=data.get("settings", {}),
-            ai_logs=data.get("ai_logs", []),
+            bot_hits=bot_hits,
+            active="settings",
         )
 
     @app.route("/admin/domains", methods=["POST"])
@@ -265,7 +302,7 @@ def create_app() -> Flask:
 
             update_data(_mutate)
             flash("域名配置已更新", "success")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_settings_page"))
 
     @app.route("/admin/domains/delete", methods=["POST"])
     def admin_domains_delete():
@@ -279,7 +316,7 @@ def create_app() -> Flask:
 
             update_data(_mutate)
             flash("域名已移除", "info")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_settings_page"))
 
     @app.route("/admin/external-links", methods=["POST"])
     def admin_external_links():
@@ -305,7 +342,7 @@ def create_app() -> Flask:
 
                 update_data(_mutate)
                 flash("外链已加入池内", "success")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_settings_page"))
 
     @app.route("/admin/pages", methods=["POST"])
     def admin_pages():
@@ -336,7 +373,7 @@ def create_app() -> Flask:
         )
         source_label = "DeepSeek" if page.get("generator") == "deepseek" else "本地模板"
         flash(f"页面已生成（{source_label}）", "success")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_content"))
 
     @app.route("/admin/pages/<slug>/regenerate", methods=["POST"])
     def regenerate_page(slug: str):
@@ -346,7 +383,7 @@ def create_app() -> Flask:
         page = _ensure_page(slug, host=request.host.split(":")[0], force=True)
         source_label = "DeepSeek" if page.get("generator") == "deepseek" else "本地模板"
         flash(f"页面已重新生成（{source_label}）", "success")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_content"))
 
     @app.route("/admin/pages/<slug>/delete", methods=["POST"])
     def delete_page(slug: str):
@@ -362,7 +399,7 @@ def create_app() -> Flask:
 
         update_data(_mutate)
         flash("页面已删除", "info")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_content"))
 
     @app.route("/admin/settings", methods=["POST"])
     def update_settings():
@@ -396,7 +433,7 @@ def create_app() -> Flask:
 
         update_data(_mutate)
         flash("设置已保存", "success")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_settings_page"))
 
     @app.route("/admin/auto-build", methods=["POST"])
     def auto_build():
@@ -419,7 +456,7 @@ def create_app() -> Flask:
                 except Exception:
                     generated.append(futures[future])
         flash(f"已批量生成 {len(generated)} 个页面", "success")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("admin_content"))
 
     @app.route("/admin/auto-build/stream")
     def auto_build_stream():
