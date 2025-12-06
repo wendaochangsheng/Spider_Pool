@@ -83,6 +83,8 @@ def create_app() -> Flask:
         if not page:
             page = {"slug": slug}
 
+        links = build_link_set(slug, data)
+
         if topic:
             page["topic"] = topic
         if keywords is not None:
@@ -95,7 +97,6 @@ def create_app() -> Flask:
         needs_generation = force or not page.get("body")
 
         if needs_generation:
-            links = build_link_set(slug, data)
             settings = data.get("settings", {})
             keyword_seed = page.get("keywords") or settings.get("default_keywords", [])
             if isinstance(keyword_seed, str):
@@ -119,6 +120,11 @@ def create_app() -> Flask:
                 data.setdefault("pages", {})[slug] = page
                 save_data(data)
 
+        if page.get("links") != links:
+            page["links"] = links
+            data.setdefault("pages", {})[slug] = page
+            save_data(data)
+
         return page
 
     @app.route("/")
@@ -130,7 +136,16 @@ def create_app() -> Flask:
         random.shuffle(pages)
         spotlight = pages[:8]
         stats = data.get("view_stats", {})
-        return render_template("index.html", pages=spotlight, stats=stats, host=host)
+        shuffled_links = data.get("external_links", [])[:]
+        random.shuffle(shuffled_links)
+        return render_template(
+            "index.html",
+            pages=spotlight,
+            page_total=len(pages),
+            stats=stats,
+            host=host,
+            external_links=shuffled_links[:8],
+        )
 
     @app.route("/p/<slug>")
     def show_page(slug: str):
@@ -138,7 +153,7 @@ def create_app() -> Flask:
         _register_host(host)
         page = _ensure_page(slug, host=host)
         record_view(slug)
-        return render_template("page.html", page=page, host=host)
+        return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
     @app.route("/robots.txt")
     def robots():
@@ -181,6 +196,7 @@ def create_app() -> Flask:
             domains=data.get("domains", []),
             external_links=data.get("external_links", []),
             settings=data.get("settings", {}),
+            ai_logs=data.get("ai_logs", []),
         )
 
     @app.route("/admin/domains", methods=["POST"])

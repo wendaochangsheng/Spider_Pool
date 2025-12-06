@@ -5,17 +5,19 @@ import os
 import random
 import textwrap
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import requests
+
+from .storage import record_ai_event
 
 DEEPSEEK_URL = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
 
 
-def _call_deepseek(prompt: str, model: str) -> Dict[str, Any] | None:
+def _call_deepseek(prompt: str, model: str) -> Tuple[Dict[str, Any] | None, str | None]:
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
-        return None
+        return None, "缺少 DEEPSEEK_API_KEY 环境变量"
 
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", model),
@@ -34,9 +36,12 @@ def _call_deepseek(prompt: str, model: str) -> Dict[str, Any] | None:
         "Content-Type": "application/json",
     }
 
-    response = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=45)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=45)
+        response.raise_for_status()
+        return response.json(), None
+    except Exception as exc:  # pragma: no cover - requests errors
+        return None, str(exc)
 
 
 def _structured_payload(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> str:
@@ -139,16 +144,30 @@ def _fallback_article(topic: str, keywords: List[str], links: List[Dict[str, Any
 def generate_article(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> Dict[str, str]:
     prompt = _structured_payload(topic, keywords, host, links)
     try:
-        response = _call_deepseek(prompt, os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"))
+        response, error = _call_deepseek(prompt, os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"))
         if response:
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             structured = json.loads(content)
             article = _build_html(structured, links)
             article["generator"] = "deepseek"
             article["model"] = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+            record_ai_event(
+                "DeepSeek 生成成功",
+                level="info",
+                meta={"topic": topic, "keywords": keywords, "model": article["model"]},
+            )
             return article
-    except Exception:
-        # swallow error and fallback below
-        pass
+        if error:
+            record_ai_event(
+                "DeepSeek 调用失败",
+                level="error",
+                meta={"topic": topic, "keywords": keywords, "error": error},
+            )
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        record_ai_event(
+            "DeepSeek 处理异常",
+            level="error",
+            meta={"topic": topic, "keywords": keywords, "error": str(exc)},
+        )
 
     return _fallback_article(topic, keywords, links)
