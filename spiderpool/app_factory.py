@@ -37,6 +37,12 @@ TOPIC_PREFIX = ["趋势", "洞察", "应用", "热点", "动态", "观察", "案
 TOPIC_SUFFIX = ["精选", "速览", "解读", "全景", "拆解", "图谱", "要点", "集锦"]
 
 
+def _is_enabled(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.lower() in {"1", "true", "on", "yes", "y"}
+
+
 def slugify(text: str) -> str:
     slug = SLUG_PATTERN.sub("-", text.lower()).strip("-")
     return slug or f"page-{random.randint(1000, 9999)}"
@@ -461,7 +467,7 @@ def create_app() -> Flask:
         if guard:
             return guard
         count = int(request.form.get("count", 5))
-        random_mode = request.form.get("random") in {"1", "true", "on"}
+        random_mode = _is_enabled(request.form.get("random"))
         host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
@@ -512,7 +518,7 @@ def create_app() -> Flask:
         host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
-        random_mode = request.args.get("random") in {"1", "true", "on"}
+        random_mode = _is_enabled(request.args.get("random"))
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         article_min = max(200, int(settings.get("article_min_words", 800) or 800))
         article_max = max(article_min + 200, int(settings.get("article_max_words", article_min + 400) or article_min + 400))
