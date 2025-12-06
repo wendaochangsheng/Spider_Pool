@@ -33,6 +33,8 @@ ADMIN_PASSWORD = os.environ.get("SPIDERPOOL_PASSWORD", "admin")
 
 SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 PAGE_LOCK = Lock()
+TOPIC_PREFIX = ["趋势", "洞察", "应用", "热点", "动态", "观察", "案例", "体验"]
+TOPIC_SUFFIX = ["精选", "速览", "解读", "全景", "拆解", "图谱", "要点", "集锦"]
 
 
 def slugify(text: str) -> str:
@@ -43,6 +45,20 @@ def slugify(text: str) -> str:
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
+
+
+def _random_theme(settings: dict, domains: list) -> tuple[str, list[str], str]:
+    domain_topics = [item.get("topic") for item in domains if item.get("topic")]
+    keyword_pool = [kw for kw in settings.get("default_keywords", []) if kw]
+    base_seed = random.choice(domain_topics + keyword_pool + ["行业", "产品", "体验", "趋势", "方案"])
+    topic = f"{random.choice(TOPIC_PREFIX)}{base_seed}{random.choice(TOPIC_SUFFIX)}"
+    keywords = keyword_pool[:]
+    random.shuffle(keywords)
+    if not keywords:
+        keywords = [base_seed]
+    keywords = keywords[:3] or [base_seed]
+    slug = slugify(f"{base_seed}-{random.randint(1000, 9999)}")
+    return topic, keywords, slug
 
 
 def create_app() -> Flask:
@@ -104,6 +120,7 @@ def create_app() -> Flask:
             page = data.get("pages", {}).get(slug) or {"slug": slug}
             links = build_link_set(slug, data)
             settings = data.get("settings", {})
+            log_to_terminal = bool(settings.get("ai_console_log", True))
 
             if topic:
                 page["topic"] = topic
@@ -144,6 +161,7 @@ def create_app() -> Flask:
             min_words=article_min,
             max_words=article_max,
             reference_urls=reference_urls,
+            log_to_terminal=log_to_terminal,
         )
 
         with PAGE_LOCK:
@@ -413,6 +431,7 @@ def create_app() -> Flask:
         ai_threads = request.form.get("ai_thread_count", "8")
         article_min = request.form.get("article_min_words", "800")
         article_max = request.form.get("article_max_words", "1500")
+        ai_console_log = request.form.get("ai_console_log") == "on"
         keyword_list = [item.strip() for item in keywords.split(",") if item.strip()]
 
         def _mutate(payload):
@@ -426,6 +445,7 @@ def create_app() -> Flask:
                     "ai_thread_count": max(1, int(ai_threads or 8)),
                     "article_min_words": max(200, int(article_min or 800)),
                     "article_max_words": max(400, int(article_max or 1500)),
+                    "ai_console_log": ai_console_log,
                 }
             )
             if settings["article_max_words"] <= settings["article_min_words"]:
@@ -441,14 +461,34 @@ def create_app() -> Flask:
         if guard:
             return guard
         count = int(request.form.get("count", 5))
+        random_mode = request.form.get("random") in {"1", "true", "on"}
         host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         generated = []
-        slugs = [slugify(f"pool-{random.randint(1000, 9999)}") for _ in range(min(count, 30))]
+        jobs = []
+        if random_mode:
+            for _ in range(min(count, 30)):
+                topic, keywords, slug = _random_theme(settings, data.get("domains", []))
+                jobs.append({"slug": slug, "topic": topic, "keywords": keywords})
+        else:
+            jobs = [
+                {"slug": slugify(f"pool-{random.randint(1000, 9999)}"), "topic": None, "keywords": None}
+                for _ in range(min(count, 30))
+            ]
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_ensure_page, slug, host=host, force=True): slug for slug in slugs}
+            futures = {
+                executor.submit(
+                    _ensure_page,
+                    job["slug"],
+                    topic=job.get("topic"),
+                    keywords=job.get("keywords"),
+                    host=host,
+                    force=True,
+                ): job["slug"]
+                for job in jobs
+            }
             for future in as_completed(futures):
                 try:
                     page = future.result()
@@ -472,27 +512,40 @@ def create_app() -> Flask:
         host = request.host.split(":")[0]
         data = load_data()
         settings = data.get("settings", {})
+        random_mode = request.args.get("random") in {"1", "true", "on"}
         max_workers = max(1, int(settings.get("ai_thread_count", 8) or 8))
         article_min = max(200, int(settings.get("article_min_words", 800) or 800))
         article_max = max(article_min + 200, int(settings.get("article_max_words", article_min + 400) or article_min + 400))
 
         def _generate():
             yield "retry: 3000\n"
-            slugs = [slugify(f"pool-{random.randint(1000, 9999)}") for _ in range(count)]
+            jobs = []
+            if random_mode:
+                for _ in range(count):
+                    topic, keywords, slug = _random_theme(settings, data.get("domains", []))
+                    jobs.append({"slug": slug, "topic": topic, "keywords": keywords})
+            else:
+                jobs = [
+                    {"slug": slugify(f"pool-{random.randint(1000, 9999)}"), "topic": None, "keywords": None}
+                    for _ in range(count)
+                ]
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
                     executor.submit(
                         _ensure_page,
-                        slug,
+                        job["slug"],
+                        topic=job.get("topic"),
+                        keywords=job.get("keywords"),
                         host=host,
                         min_words=article_min,
                         max_words=article_max,
                         force=True,
-                    ): slug
-                    for slug in slugs
+                    ): job
+                    for job in jobs
                 }
                 for idx, future in enumerate(as_completed(futures)):
-                    slug = futures[future]
+                    job = futures[future]
+                    slug = job["slug"]
                     try:
                         page = future.result()
                     except Exception:
@@ -502,6 +555,7 @@ def create_app() -> Flask:
                         "total": count,
                         "title": page.get("title", slug),
                         "slug": slug,
+                        "topic": job.get("topic"),
                         "updated_at": page.get("updated_at"),
                         "generator": page.get("generator", "unknown"),
                         "preview": (page.get("excerpt") or page.get("topic") or "")[:80],

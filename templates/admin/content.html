@@ -10,6 +10,10 @@
       <label>数量
         <input type="number" min="1" max="30" name="count" value="{{ settings.auto_page_count or 12 }}">
       </label>
+      <label class="checkbox">
+        <input type="checkbox" name="random" id="auto-random" value="1">
+        <span>随机主题 / 关键词</span>
+      </label>
       <p class="muted">当前并发：{{ settings.ai_thread_count or 8 }} 线程；文章字数 {{ settings.article_min_words or 800 }}-{{ settings.article_max_words or 1500 }}。</p>
       <button type="submit">立即批量生成</button>
     </form>
@@ -91,6 +95,7 @@
       }
       const logWindow = document.getElementById("auto-build-log");
       const submitButton = form.querySelector("button[type='submit']");
+      const randomToggle = document.getElementById("auto-random");
       let source;
 
       function appendLog(text) {
@@ -108,11 +113,12 @@
         }
         logWindow.innerHTML = "";
         const count = parseInt(form.count.value, 10) || parseInt(form.dataset.defaultCount || "5", 10);
-        appendLog(`开始批量生成 ${count} 个页面...`);
+        const randomMode = randomToggle && randomToggle.checked;
+        appendLog(`开始批量生成 ${count} 个页面${randomMode ? "（随机主题）" : ""}...`);
         submitButton.disabled = true;
         submitButton.textContent = "生成中...";
 
-        source = new EventSource(`/admin/auto-build/stream?count=${count}`);
+        source = new EventSource(`/admin/auto-build/stream?count=${count}&random=${randomMode ? "1" : "0"}`);
         source.onmessage = function (evt) {
           try {
             const payload = JSON.parse(evt.data);
@@ -126,8 +132,9 @@
             const generator = payload.generator === "deepseek"
               ? "DeepSeek"
               : (payload.generator === "local" ? "模板" : (payload.generator || "未知"));
+            const topic = payload.topic ? ` · ${payload.topic}` : "";
             const previewText = payload.preview ? ` · ${payload.preview}` : "";
-            appendLog(`(${payload.progress}/${payload.total}) ${payload.title} [${generator}]${previewText}`);
+            appendLog(`(${payload.progress}/${payload.total}) ${payload.title}${topic} [${generator}]${previewText}`);
           } catch (error) {
             appendLog("解析进度信息时出错。");
           }

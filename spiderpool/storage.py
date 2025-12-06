@@ -24,6 +24,7 @@ DEFAULT_DATA = {
         "ai_thread_count": 8,
         "article_min_words": 800,
         "article_max_words": 1500,
+        "ai_console_log": True,
     },
 }
 

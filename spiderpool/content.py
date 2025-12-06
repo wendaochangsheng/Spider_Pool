@@ -250,6 +250,11 @@ def _safe_title(title: str | None, topic: str) -> str:
     return candidate
 
 
+def _ai_log(message: str, enabled: bool) -> None:
+    if enabled:
+        print(message, flush=True)
+
+
 def generate_article(
     topic: str,
     keywords: List[str],
@@ -259,6 +264,7 @@ def generate_article(
     min_words: int | None = None,
     max_words: int | None = None,
     reference_urls: List[str] | None = None,
+    log_to_terminal: bool = True,
 ) -> Dict[str, str]:
     formal_topic = _formalize_topic(topic, keywords, host)
     min_words_env = int(os.environ.get("ARTICLE_MIN_WORDS", 0)) if os.environ.get("ARTICLE_MIN_WORDS") else None
@@ -281,8 +287,8 @@ def generate_article(
         max_words=max_words,
         reference_context=reference_context,
     )
-    print(f"[AI] 开始生成: topic='{topic}', keywords={keywords}, host='{host}'", flush=True)
-    print(f"[AI] 提示词片段: {prompt[:280]}...", flush=True)
+    _ai_log(f"[AI] 开始生成: topic='{topic}', keywords={keywords}, host='{host}'", log_to_terminal)
+    _ai_log(f"[AI] 提示词片段: {prompt[:280]}...", log_to_terminal)
     try:
         response, error = _call_deepseek(
             prompt,
@@ -291,12 +297,12 @@ def generate_article(
         )
         if response:
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
-            print(f"[AI] 原始响应片段: {content[:320]}...", flush=True)
+            _ai_log(f"[AI] 原始响应片段: {content[:320]}...", log_to_terminal)
             try:
                 normalized = _normalize_json_text(content)
                 if not normalized:
                     raise json.JSONDecodeError("未找到可解析的 JSON 结构", content, 0)
-                print(f"[AI] 解析内容片段: {normalized[:280]}...", flush=True)
+                _ai_log(f"[AI] 解析内容片段: {normalized[:280]}...", log_to_terminal)
                 structured = json.loads(normalized)
                 structured["title"] = _safe_title(structured.get("title"), formal_topic)
             except json.JSONDecodeError as exc:
@@ -305,7 +311,7 @@ def generate_article(
                     level="error",
                     meta={"topic": topic, "keywords": keywords, "error": str(exc)},
                 )
-                print(f"[AI] JSON 解析失败: {exc}", flush=True)
+                _ai_log(f"[AI] JSON 解析失败: {exc}", log_to_terminal)
                 return _fallback_article(formal_topic, keywords, links)
             article = _build_html(structured, links)
             article["generator"] = "deepseek"
@@ -323,7 +329,7 @@ def generate_article(
                     "references": reference_urls,
                 },
             )
-            print("[AI] 生成完成，已写入内容。", flush=True)
+            _ai_log("[AI] 生成完成，已写入内容。", log_to_terminal)
             return article
         if error:
             record_ai_event(
@@ -331,13 +337,13 @@ def generate_article(
                 level="error",
                 meta={"topic": topic, "keywords": keywords, "error": error},
             )
-            print(f"[AI] 调用错误: {error}", flush=True)
+            _ai_log(f"[AI] 调用错误: {error}", log_to_terminal)
     except Exception as exc:  # pragma: no cover - defensive fallback
         record_ai_event(
             "DeepSeek 处理异常",
             level="error",
             meta={"topic": topic, "keywords": keywords, "error": str(exc)},
         )
-        print(f"[AI] 异常: {exc}", flush=True)
+        _ai_log(f"[AI] 异常: {exc}", log_to_terminal)
 
     return _fallback_article(formal_topic, keywords, links)
