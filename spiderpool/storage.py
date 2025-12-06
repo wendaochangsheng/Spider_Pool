@@ -12,6 +12,7 @@ DEFAULT_DATA = {
     "external_links": [],
     "pages": {},
     "view_stats": {},
+    "ai_logs": [],
     "settings": {
         "auto_page_count": 12,
         "default_keywords": [],
@@ -57,5 +58,20 @@ def record_view(slug: str) -> None:
     def _mutate(payload: Dict[str, Any]) -> None:
         stats = payload.setdefault("view_stats", {})
         stats[slug] = stats.get(slug, 0) + 1
+
+    update_data(_mutate)
+
+
+def record_ai_event(message: str, *, level: str = "info", meta: Dict[str, Any] | None = None) -> None:
+    def _mutate(payload: Dict[str, Any]) -> None:
+        logs = payload.setdefault("ai_logs", [])
+        entry = {
+            "message": message,
+            "level": level,
+            "meta": meta or {},
+            "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        }
+        logs.append(entry)
+        payload["ai_logs"] = logs[-50:]
 
     update_data(_mutate)
