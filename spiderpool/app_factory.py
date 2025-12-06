@@ -157,9 +157,7 @@ def create_app() -> Flask:
 
     def _filter_pages_by_host(host: str, data: dict) -> list[dict]:
         pages = list(data.get("pages", {}).values())
-        normalized = _normalize_host(host)
-        host_pages = [page for page in pages if _normalize_host(page.get("host")) == normalized]
-        return host_pages or pages
+        return pages
 
     def _resolve_random_page(host: str, path_hint: str | None = None) -> dict:
         data = load_data()
