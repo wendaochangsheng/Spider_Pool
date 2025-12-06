@@ -155,6 +155,20 @@ def create_app() -> Flask:
         record_view(slug)
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
+    @app.errorhandler(404)
+    def fallback_page(error):  # noqa: ANN001
+        host = request.host.split(":")[0]
+        _register_host(host)
+        data = load_data()
+        pages = list(data.get("pages", {}).values())
+        random.shuffle(pages)
+        if not pages:
+            return make_response("未找到内容", 404)
+        candidate = pages[0]
+        page = _ensure_page(candidate.get("slug"), host=host)
+        record_view(page.get("slug"))
+        return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
+
     @app.route("/robots.txt")
     def robots():
         robots_body = "User-agent: *\nDisallow: /\n"

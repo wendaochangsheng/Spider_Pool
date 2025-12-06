@@ -1,19 +1,15 @@
 {% extends "base.html" %}
-{% block title %}内容矩阵 · {{ host }}{% endblock %}
+{% block title %}内容集 · {{ host }}{% endblock %}
 {% block content %}
 <section class="hero">
   <div>
     <p class="label">{{ host }}</p>
-    <h2>蜘蛛池观测面板</h2>
-    <p>自动生成长文、动态互链与外链曝光，一站式对齐真实蜘蛛池的运行状态。</p>
+    <h2>内容节点速览</h2>
+    <p>生成和收集的长文内容聚合于此，方便快速浏览与分发，不暴露后台入口。</p>
     <div class="badges">
       <span>默认关键词：{{ pool_settings.default_keywords | join(' · ') if pool_settings.default_keywords else '未设置' }}</span>
       <span>批量生成：{{ pool_settings.auto_page_count or 12 }}/次</span>
     </div>
-  </div>
-  <div class="hero-actions">
-    <a href="/admin" class="button">进入后台</a>
-    <a href="/admin/login" class="button ghost">管理员登录</a>
   </div>
 </section>
 

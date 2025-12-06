@@ -143,11 +143,23 @@ def _fallback_article(topic: str, keywords: List[str], links: List[Dict[str, Any
 
 def generate_article(topic: str, keywords: List[str], host: str, links: List[Dict[str, Any]]) -> Dict[str, str]:
     prompt = _structured_payload(topic, keywords, host, links)
+    print(f"[AI] 开始生成: topic='{topic}', keywords={keywords}, host='{host}'", flush=True)
+    print(f"[AI] 提示词片段: {prompt[:280]}...", flush=True)
     try:
         response, error = _call_deepseek(prompt, os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"))
         if response:
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
-            structured = json.loads(content)
+            print(f"[AI] 原始响应片段: {content[:320]}...", flush=True)
+            try:
+                structured = json.loads(content)
+            except json.JSONDecodeError as exc:
+                record_ai_event(
+                    "DeepSeek 返回无法解析的内容",
+                    level="error",
+                    meta={"topic": topic, "keywords": keywords, "error": str(exc)},
+                )
+                print(f"[AI] JSON 解析失败: {exc}", flush=True)
+                return _fallback_article(topic, keywords, links)
             article = _build_html(structured, links)
             article["generator"] = "deepseek"
             article["model"] = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
@@ -156,6 +168,7 @@ def generate_article(topic: str, keywords: List[str], host: str, links: List[Dic
                 level="info",
                 meta={"topic": topic, "keywords": keywords, "model": article["model"]},
             )
+            print("[AI] 生成完成，已写入内容。", flush=True)
             return article
         if error:
             record_ai_event(
@@ -163,11 +176,13 @@ def generate_article(topic: str, keywords: List[str], host: str, links: List[Dic
                 level="error",
                 meta={"topic": topic, "keywords": keywords, "error": error},
             )
+            print(f"[AI] 调用错误: {error}", flush=True)
     except Exception as exc:  # pragma: no cover - defensive fallback
         record_ai_event(
             "DeepSeek 处理异常",
             level="error",
             meta={"topic": topic, "keywords": keywords, "error": str(exc)},
         )
+        print(f"[AI] 异常: {exc}", flush=True)
 
     return _fallback_article(topic, keywords, links)
