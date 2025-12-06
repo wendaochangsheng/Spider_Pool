@@ -26,7 +26,7 @@ from flask import (
 
 from .content import generate_article, request_ai_theme
 from .links import build_link_set
-from .storage import load_data, save_data, update_data, record_view
+from .storage import load_data, save_data, update_data, record_view, record_bot_hit
 
 ADMIN_USERNAME = os.environ.get("SPIDERPOOL_ADMIN", "admin")
 ADMIN_PASSWORD = os.environ.get("SPIDERPOOL_PASSWORD", "admin")
@@ -282,6 +282,14 @@ def create_app() -> Flask:
         record_view(slug, user_agent=request.headers.get("User-Agent"))
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
 
+    @app.route("/robots.txt")
+    def robots():
+        robots_body = "User-agent: *\nAllow: /\n"
+        record_bot_hit(request.headers.get("User-Agent"))
+        response = make_response(robots_body)
+        response.headers["Content-Type"] = "text/plain"
+        return response
+
     @app.errorhandler(404)
     def fallback_page(error):  # noqa: ANN001
         host = request.host.split(":")[0]
@@ -293,7 +301,7 @@ def create_app() -> Flask:
     @app.route("/<path:any_path>")
     def wildcard_page(any_path: str):
         reserved_prefixes = ("admin", "api", "static")
-        if any_path.startswith(reserved_prefixes) or any_path in {"robots.txt", "favicon.ico"}:
+        if any_path.startswith(reserved_prefixes) or any_path in {"favicon.ico"}:
             return make_response("未找到内容", 404)
 
         host = request.host.split(":")[0]
@@ -302,13 +310,6 @@ def create_app() -> Flask:
         page = _resolve_random_page(host, slug_hint)
         record_view(page.get("slug"), user_agent=request.headers.get("User-Agent"))
         return render_template("page.html", page=page, host=host, dynamic_links=page.get("links", []))
-
-    @app.route("/robots.txt")
-    def robots():
-        robots_body = "User-agent: *\nAllow: /\n"
-        response = make_response(robots_body)
-        response.headers["Content-Type"] = "text/plain"
-        return response
 
     @app.route("/admin/login", methods=["GET", "POST"])
     def admin_login():
