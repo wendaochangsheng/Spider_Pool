@@ -42,7 +42,7 @@
       <h3>访问趋势（按天）</h3>
       <p class="muted">近 45 天访问曲线，便于观察波峰波谷。</p>
     </div>
-    {% set max_view = view_trend | max(attribute='views') if view_trend else 1 %}
+    {% set max_view = (view_trend | map(attribute='views') | max) if view_trend else 1 %}
     <div class="trend-list">
       {% for day in view_trend %}
         <div class="trend-row">

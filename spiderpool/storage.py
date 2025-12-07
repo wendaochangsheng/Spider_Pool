@@ -417,3 +417,28 @@ def record_bot_hit(user_agent: str | None) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def save_settings_only(settings: Dict[str, Any]) -> None:
+    """Persist settings with a focused transaction to avoid clobbering data under load."""
+    attempts = 0
+    while True:
+        attempts += 1
+        conn = _get_connection()
+        try:
+            conn.execute("DELETE FROM settings")
+            conn.executemany(
+                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+                [(key, json.dumps(value, ensure_ascii=False)) for key, value in settings.items()],
+            )
+            conn.commit()
+            return
+        except sqlite3.OperationalError as exc:  # pragma: no cover - runtime resilience
+            if "locked" not in str(exc).lower() or attempts >= 5:
+                raise
+            time.sleep(0.2 * attempts)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass

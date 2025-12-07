@@ -26,7 +26,14 @@ from flask import (
 
 from .content import generate_article, request_ai_theme
 from .links import build_link_set
-from .storage import load_data, save_data, update_data, record_view, record_bot_hit
+from .storage import (
+    load_data,
+    save_data,
+    save_settings_only,
+    update_data,
+    record_view,
+    record_bot_hit,
+)
 
 ADMIN_USERNAME = os.environ.get("SPIDERPOOL_ADMIN", "admin")
 ADMIN_PASSWORD = os.environ.get("SPIDERPOOL_PASSWORD", "admin")
@@ -624,24 +631,24 @@ def create_app() -> Flask:
         ai_console_log = request.form.get("ai_console_log") == "on"
         keyword_list = [item.strip() for item in keywords.split(",") if item.strip()]
 
-        def _mutate(payload):
-            settings = payload.setdefault("settings", {})
-            settings.update(
-                {
-                    "auto_page_count": int(auto_count or 8),
-                    "default_keywords": keyword_list,
-                    "deepseek_model": model,
-                    "language": language,
-                    "ai_thread_count": max(1, int(ai_threads or 8)),
-                    "article_min_words": max(200, int(article_min or 800)),
-                    "article_max_words": max(400, int(article_max or 1500)),
-                    "ai_console_log": ai_console_log,
-                }
-            )
-            if settings["article_max_words"] <= settings["article_min_words"]:
-                settings["article_max_words"] = settings["article_min_words"] + 200
+        data = load_data()
+        settings = data.get("settings", {}).copy()
+        settings.update(
+            {
+                "auto_page_count": int(auto_count or 8),
+                "default_keywords": keyword_list,
+                "deepseek_model": model,
+                "language": language,
+                "ai_thread_count": max(1, int(ai_threads or 8)),
+                "article_min_words": max(200, int(article_min or 800)),
+                "article_max_words": max(400, int(article_max or 1500)),
+                "ai_console_log": ai_console_log,
+            }
+        )
+        if settings["article_max_words"] <= settings["article_min_words"]:
+            settings["article_max_words"] = settings["article_min_words"] + 200
 
-        update_data(_mutate)
+        save_settings_only(settings)
         flash("设置已保存", "success")
         return redirect(url_for("admin_settings_page"))
 
