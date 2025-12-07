@@ -101,6 +101,14 @@ a:hover { text-decoration: underline; }
 .badges, .pill-group { display: flex; gap: .5rem; flex-wrap: wrap; }
 .badges span { padding: .35rem .6rem; border-radius: 999px; background: var(--accent-soft); color: var(--text); border: 1px solid var(--border); font-size: .85rem; }
 
+.trend-list { display: flex; flex-direction: column; gap: .6rem; max-height: 520px; overflow: auto; padding-right: .4rem; }
+.trend-row { display: flex; flex-direction: column; gap: .3rem; }
+.trend-meta { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.bar { width: 100%; height: 10px; border-radius: 999px; background: #eef2ff; position: relative; overflow: hidden; border: 1px solid var(--border); }
+.bar span { display: block; height: 100%; background: linear-gradient(90deg, #315efb, #6e8bff); border-radius: 999px; }
+.bar.inline { height: 8px; background: #f3f5fb; }
+.bar.inline span { background: linear-gradient(90deg, #34d399, #22c55e); }
+
 .log-window { background: #0f172a; color: #e2e8f0; border: 1px solid #1e293b; border-radius: 12px; padding: .75rem; max-height: 240px; overflow-y: auto; font-family: "JetBrains Mono", monospace, sans-serif; font-size: .85rem; }
 .log-entry { margin-bottom: .3rem; }
 .log-entry.error { color: #ff8585; }
