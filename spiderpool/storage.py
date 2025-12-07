@@ -358,6 +358,7 @@ def record_ai_event(message: str, *, level: str = "info", meta: Dict[str, Any] |
 BOT_PATTERNS: List[Tuple[str, str]] = [
     ("googlebot", "Google"),
     ("bingbot", "Bing"),
+    ("yandexbot", "Yandex"),
     ("baiduspider", "Baidu"),
     ("bytespider", "ByteDance"),
     ("yisouspider", "360"),
@@ -374,6 +375,12 @@ BOT_PATTERNS: List[Tuple[str, str]] = [
     ("slurp", "Yahoo"),
     ("seznambot", "Seznam"),
     ("mj12bot", "Majestic"),
+    ("oai-searchbot", "OpenAI SearchBot"),
+    ("gptbot", "GPTBot"),
+    ("applebot", "Applebot"),
+    ("semrushbot", "Semrush"),
+    ("claudebot", "ClaudeBot"),
+    ("kstandbot", "KStandBot"),
 ]
 
 
