@@ -87,16 +87,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             hits INTEGER DEFAULT 1,
             last_seen TEXT
         );
-        CREATE TABLE IF NOT EXISTS view_daily (
-            date TEXT PRIMARY KEY,
-            views INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS bot_daily (
-            date TEXT,
-            family TEXT,
-            hits INTEGER DEFAULT 0,
-            PRIMARY KEY(date, family)
-        );
         """
     )
     _ensure_default_settings(conn)
@@ -138,10 +128,8 @@ def load_data() -> Dict[str, Any]:
         "external_links": [],
         "pages": {},
         "view_stats": {},
-        "view_daily": [],
         "ai_logs": [],
         "bot_hits": [],
-        "bot_daily": [],
         "settings": _fetch_settings(conn),
     }
 
@@ -194,13 +182,6 @@ def load_data() -> Dict[str, Any]:
             }
         )
 
-    for row in _fetch_table(conn, "SELECT date, views FROM view_daily ORDER BY date DESC LIMIT 45"):
-        data["view_daily"].append({"date": row["date"], "views": row["views"]})
-
-    for row in _fetch_table(conn, "SELECT date, family, hits FROM bot_daily ORDER BY date DESC, hits DESC"):
-        data["bot_daily"].append({"date": row["date"], "family": row["family"], "hits": row["hits"]})
-
-    conn.close()
     return data
 
 
@@ -335,10 +316,6 @@ def record_view(slug: str, *, user_agent: str | None = None) -> None:
             "INSERT INTO view_stats(slug, views) VALUES(?, 1) ON CONFLICT(slug) DO UPDATE SET views = views + 1",
             (slug,),
         )
-        conn.execute(
-            "INSERT INTO view_daily(date, views) VALUES(date('now'), 1) ON CONFLICT(date) DO UPDATE SET views = view_daily.views + 1",
-            (),
-        )
         conn.commit()
     finally:
         conn.close()
@@ -363,14 +340,6 @@ BOT_PATTERNS: List[Tuple[str, str]] = [
     ("yisouspider", "360"),
     ("sogou spider", "Sogou"),
     ("duckduckbot", "DuckDuckGo"),
-    ("oai-searchbot", "OpenAI SearchBot"),
-    ("searchbot", "OpenAI SearchBot"),
-    ("gptbot", "OpenAI GPTBot"),
-    ("claudebot", "ClaudeBot"),
-    ("applebot", "Applebot"),
-    ("semrushbot", "Semrush"),
-    ("yandexbot", "Yandex"),
-    ("kstandbot", "KStandBot"),
     ("slurp", "Yahoo"),
     ("seznambot", "Seznam"),
     ("mj12bot", "Majestic"),
@@ -384,7 +353,7 @@ def detect_bot(user_agent: str | None) -> str | None:
     for pattern, family in BOT_PATTERNS:
         if re.search(pattern, lowered):
             return family
-    if "bot" in lowered or "spider" in lowered or "crawl" in lowered:
+    if "bot" in lowered or "spider" in lowered:
         return "Unknown"
     return None
 
@@ -405,15 +374,6 @@ def record_bot_hit(user_agent: str | None) -> None:
             last_seen = datetime('now')
         """,
         (ua_value[:500], family),
-    )
-    conn.execute(
-        """
-        INSERT INTO bot_daily(date, family, hits)
-        VALUES(date('now'), ?, 1)
-        ON CONFLICT(date, family) DO UPDATE SET
-            hits = bot_daily.hits + 1
-        """,
-        (family,),
     )
     conn.commit()
     conn.close()
