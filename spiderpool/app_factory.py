@@ -26,7 +26,14 @@ from flask import (
 
 from .content import generate_article, request_ai_theme
 from .links import build_link_set
-from .storage import load_data, save_data, update_data, record_view, record_bot_hit
+from .storage import (
+    load_data,
+    save_data,
+    save_settings_only,
+    update_data,
+    record_view,
+    record_bot_hit,
+)
 
 ADMIN_USERNAME = os.environ.get("SPIDERPOOL_ADMIN", "admin")
 ADMIN_PASSWORD = os.environ.get("SPIDERPOOL_PASSWORD", "admin")
@@ -138,6 +145,39 @@ def create_app() -> Flask:
         bot_hits = data.get("bot_hits", [])
         domain_stats = _domain_overview(pages, stats_map)
         return data, pages, stats_map, sorted_stats, bot_hits, domain_stats
+
+    def _analytics_payload():
+        data = load_data()
+        daily_views = sorted(data.get("view_daily", []), key=lambda item: item.get("date"))
+        bot_daily = data.get("bot_daily", [])
+
+        total_views = sum(item.get("views", 0) for item in daily_views)
+        last_day_views = daily_views[-1].get("views", 0) if daily_views else 0
+        last_7_views = sum(item.get("views", 0) for item in daily_views[-7:])
+
+        family_totals: dict[str, int] = {}
+        bot_daily_by_date: dict[str, list[dict]] = {}
+        for entry in bot_daily:
+            family = entry.get("family") or "Unknown"
+            hits = int(entry.get("hits", 0))
+            family_totals[family] = family_totals.get(family, 0) + hits
+            bot_daily_by_date.setdefault(entry.get("date"), []).append(entry)
+
+        family_breakdown = sorted(
+            ({"family": family, "hits": hits} for family, hits in family_totals.items()),
+            key=lambda item: item["hits"],
+            reverse=True,
+        )
+
+        return {
+            "data": data,
+            "daily_views": daily_views,
+            "total_views": total_views,
+            "last_day_views": last_day_views,
+            "last_7_views": last_7_views,
+            "family_breakdown": family_breakdown,
+            "bot_daily_by_date": dict(sorted(bot_daily_by_date.items(), reverse=True)),
+        }
 
     def _register_host(hostname: str) -> None:
         if not hostname:
@@ -437,6 +477,27 @@ def create_app() -> Flask:
             active="settings",
         )
 
+    @app.route("/admin/analytics")
+    def admin_analytics():
+        guard = _require_authentication()
+        if guard:
+            return guard
+
+        payload = _analytics_payload()
+        data = payload["data"]
+        return render_template(
+            "admin/analytics.html",
+            settings=data.get("settings", {}),
+            bot_hits=data.get("bot_hits", []),
+            view_trend=payload.get("daily_views", []),
+            total_views=payload.get("total_views", 0),
+            last_day_views=payload.get("last_day_views", 0),
+            last_7_views=payload.get("last_7_views", 0),
+            family_breakdown=payload.get("family_breakdown", []),
+            bot_daily_by_date=payload.get("bot_daily_by_date", {}),
+            active="analytics",
+        )
+
     @app.route("/admin/domains", methods=["POST"])
     def admin_domains():
         guard = _require_authentication()
@@ -570,24 +631,24 @@ def create_app() -> Flask:
         ai_console_log = request.form.get("ai_console_log") == "on"
         keyword_list = [item.strip() for item in keywords.split(",") if item.strip()]
 
-        def _mutate(payload):
-            settings = payload.setdefault("settings", {})
-            settings.update(
-                {
-                    "auto_page_count": int(auto_count or 8),
-                    "default_keywords": keyword_list,
-                    "deepseek_model": model,
-                    "language": language,
-                    "ai_thread_count": max(1, int(ai_threads or 8)),
-                    "article_min_words": max(200, int(article_min or 800)),
-                    "article_max_words": max(400, int(article_max or 1500)),
-                    "ai_console_log": ai_console_log,
-                }
-            )
-            if settings["article_max_words"] <= settings["article_min_words"]:
-                settings["article_max_words"] = settings["article_min_words"] + 200
+        data = load_data()
+        settings = data.get("settings", {}).copy()
+        settings.update(
+            {
+                "auto_page_count": int(auto_count or 8),
+                "default_keywords": keyword_list,
+                "deepseek_model": model,
+                "language": language,
+                "ai_thread_count": max(1, int(ai_threads or 8)),
+                "article_min_words": max(200, int(article_min or 800)),
+                "article_max_words": max(400, int(article_max or 1500)),
+                "ai_console_log": ai_console_log,
+            }
+        )
+        if settings["article_max_words"] <= settings["article_min_words"]:
+            settings["article_max_words"] = settings["article_min_words"] + 200
 
-        update_data(_mutate)
+        save_settings_only(settings)
         flash("设置已保存", "success")
         return redirect(url_for("admin_settings_page"))
 
