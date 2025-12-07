@@ -185,7 +185,10 @@ def create_app() -> Flask:
 
         normalized = _normalize_host(hostname)
         existing_domains = load_data().get("domains", [])
-        if any(_normalize_host(item.get("host")) == normalized for item in existing_domains):
+        # 避免后台删除域名后再次访问又被自动写回，只有在名单为空时才进行自动注册
+        if existing_domains:
+            if any(_normalize_host(item.get("host")) == normalized for item in existing_domains):
+                return
             return
 
         def _mutate(payload):

@@ -67,9 +67,9 @@
     </div>
     <div class="table small">
       <div class="row head"><span>品牌</span><span>占比</span><span>抓取次数</span></div>
-      {% set max_hits = family_breakdown | max(attribute='hits') if family_breakdown else 1 %}
+      {% set max_hits = (family_breakdown | map(attribute='hits') | max) if family_breakdown else 1 %}
       {% for item in family_breakdown %}
-        {% set percent = (item.hits / max_hits * 100) | round(1) %}
+        {% set percent = (item.hits / (max_hits or 1) * 100) | round(1) %}
         <div class="row">
           <span>{{ item.family }}</span>
           <span>
